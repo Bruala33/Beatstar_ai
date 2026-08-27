@@ -13,43 +13,41 @@ import httpx
 
 from app.config import settings
 
+try:
+    import static_ffmpeg
+    static_ffmpeg.add_paths()
+except Exception:
+    pass
+
 logger = logging.getLogger(__name__)
 
 class AudioDownloader:
     """
     Handles YouTube audio extraction, multi-tier search, and in-memory audio decoding.
-    Configured with universal format selection ('ba/b/bestaudio/best'), cookiefile detection,
+    Configured with official mobile client extraction (Android/iOS) to bypass bot verification,
     and automatic cleanup of downloads to save disk space.
     """
 
     @classmethod
     def get_base_ydl_opts(cls) -> Dict[str, Any]:
         """
-        Returns base yt-dlp configuration with universal format selection
-        and automatic cookies.txt detection.
+        Returns base yt-dlp configuration with official mobile client extraction
+        to bypass bot verification and datacenter blocks.
         """
         opts: Dict[str, Any] = {
-            'format': 'ba/b/bestaudio/best',
+            'format': 'bestaudio/best',
             'quiet': True,
             'no_warnings': True,
             'noplaylist': True,
             'nocheckcertificate': True,
             'ignoreerrors': False,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios', 'android_creator'],
+                    'player_skip': ['webpage', 'configs']
+                }
+            },
         }
-
-        # Check for optional cookies.txt in workspace root or current directory
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        cookie_candidates = [
-            'cookies.txt',
-            os.path.join(os.getcwd(), 'cookies.txt'),
-            os.path.join(project_root, 'cookies.txt')
-        ]
-        for candidate in cookie_candidates:
-            if os.path.exists(candidate) and os.path.isfile(candidate):
-                opts['cookiefile'] = candidate
-                logger.info(f"Found and loaded yt-dlp cookiefile: {candidate}")
-                break
-
         return opts
 
     @classmethod
@@ -383,9 +381,10 @@ class AudioDownloader:
         max_duration: int = settings.MAX_DURATION_SECONDS
     ) -> Tuple[np.ndarray, int, Dict[str, Any]]:
         """
-        Downloads audio or video track from YouTube into downloads/ directory
-        using universal format ('ba/b/bestaudio/best') and loads it directly into Librosa.
-        Deletes the temporary download file immediately after loading to conserve disk space.
+        Downloads audio from YouTube into downloads/ directory
+        using official mobile client extraction (Android/iOS) and extracts MP3 audio via FFmpeg,
+        then loads it directly into Librosa.
+        Cleans up temporary download files immediately after loading to conserve disk space.
         Returns:
             - y: np.ndarray (audio waveform, mono)
             - sr: int (sampling rate)
@@ -399,36 +398,32 @@ class AudioDownloader:
         downloads_dir = os.path.join(project_root, "downloads")
         os.makedirs(downloads_dir, exist_ok=True)
 
-        # Detect cookies if present
-        cookie_path = None
-        cookie_candidates = [
-            'cookies.txt',
-            os.path.join(os.getcwd(), 'cookies.txt'),
-            os.path.join(project_root, 'cookies.txt')
-        ]
-        for candidate in cookie_candidates:
-            if os.path.exists(candidate) and os.path.isfile(candidate):
-                cookie_path = candidate
-                break
-
         outtmpl_pattern = os.path.join(downloads_dir, "%(id)s.%(ext)s")
 
-        ydl_opts = {
+        ydl_opts: Dict[str, Any] = {
+            'format': 'bestaudio/best',
             'quiet': True,
             'no_warnings': True,
             'noplaylist': True,
             'nocheckcertificate': True,
             'ignoreerrors': False,
-            # Universal format: accepts any audio or video available (never fails)
-            'format': 'ba/b/bestaudio/best',
             'outtmpl': outtmpl_pattern,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios', 'android_creator'],
+                    'player_skip': ['webpage', 'configs']
+                }
+            },
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '128',
+            }],
         }
-
-        if cookie_path:
-            ydl_opts['cookiefile'] = cookie_path
 
         logger.info(f"Extracting audio from URL: {normalized_url}")
         downloaded_file_path = None
+        video_id = clean_id or "unknown"
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -451,10 +446,17 @@ class AudioDownloader:
                         f"El video dura {duration}s, superando el limite maximo permitido de {max_duration}s."
                     )
 
-                # Locate downloaded file path via ydl.prepare_filename or directory scan
-                expected_path = ydl.prepare_filename(info_dict)
-                if os.path.exists(expected_path):
-                    downloaded_file_path = expected_path
+                # Locate downloaded file path. With FFmpegExtractAudio, output is typically <video_id>.mp3
+                expected_mp3 = os.path.join(downloads_dir, f"{video_id}.mp3")
+                prepared_path = ydl.prepare_filename(info_dict)
+                prepared_mp3 = os.path.splitext(prepared_path)[0] + ".mp3"
+
+                if os.path.exists(expected_mp3):
+                    downloaded_file_path = expected_mp3
+                elif os.path.exists(prepared_mp3):
+                    downloaded_file_path = prepared_mp3
+                elif os.path.exists(prepared_path):
+                    downloaded_file_path = prepared_path
                 else:
                     candidates = [
                         os.path.join(downloads_dir, f)
@@ -462,7 +464,8 @@ class AudioDownloader:
                         if f.startswith(video_id) and not f.endswith('.part')
                     ]
                     if candidates:
-                        downloaded_file_path = candidates[0]
+                        mp3_candidates = [c for c in candidates if c.endswith('.mp3')]
+                        downloaded_file_path = mp3_candidates[0] if mp3_candidates else candidates[0]
 
                 if not downloaded_file_path or not os.path.exists(downloaded_file_path):
                     raise FileNotFoundError(f"El archivo descargado para '{video_id}' no fue encontrado en {downloads_dir}.")
@@ -482,10 +485,14 @@ class AudioDownloader:
                 return y, sr, metadata
 
         finally:
-            # Clean up the downloaded file to save disk space
-            if downloaded_file_path and os.path.exists(downloaded_file_path):
-                try:
-                    os.remove(downloaded_file_path)
-                    logger.info(f"Cleaned up temporary download file: {downloaded_file_path}")
-                except Exception as clean_err:
-                    logger.warning(f"Could not remove temporary file {downloaded_file_path}: {clean_err}")
+            # Clean up all downloaded/temporary files for this video_id to avoid disk accumulation
+            if os.path.exists(downloads_dir):
+                for fname in os.listdir(downloads_dir):
+                    if fname.startswith(video_id):
+                        fpath = os.path.join(downloads_dir, fname)
+                        try:
+                            if os.path.isfile(fpath):
+                                os.remove(fpath)
+                                logger.info(f"Cleaned up temporary download file: {fpath}")
+                        except Exception as clean_err:
+                            logger.warning(f"Could not remove temporary file {fpath}: {clean_err}")
