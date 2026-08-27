@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 import yt_dlp
 
+from app.services.downloader import AudioDownloader
+
 try:
     from ytmusicapi import YTMusic
     YTMUSIC_AVAILABLE = True
@@ -53,12 +55,11 @@ async def import_playlist_by_url(req: ImportUrlRequest):
 
     target_url = f"https://www.youtube.com/playlist?list={playlist_id}" if not url_or_id.startswith("http") else url_or_id
 
-    ydl_opts = {
+    ydl_opts = AudioDownloader.get_base_ydl_opts()
+    ydl_opts.update({
         'extract_flat': True,
-        'quiet': True,
-        'no_warnings': True,
         'skip_download': True
-    }
+    })
 
     try:
         def fetch():

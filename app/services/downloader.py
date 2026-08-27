@@ -16,23 +16,58 @@ logger = logging.getLogger(__name__)
 class AudioDownloader:
     """
     Handles YouTube audio extraction and in-memory/temp buffer decoding using yt-dlp.
+    Configured with mobile client bypass headers and cookies.txt fallback to prevent cloud bot blocks.
     """
 
-    @staticmethod
-    def search_youtube(query: str, max_results: int = 8) -> list:
+    @classmethod
+    def get_base_ydl_opts(cls) -> Dict[str, Any]:
+        """
+        Returns base yt-dlp configuration with mobile client bypass (android, ios, mweb)
+        and automatic cookies.txt detection to prevent bot-detection blocking.
+        """
+        opts: Dict[str, Any] = {
+            'quiet': True,
+            'no_warnings': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios', 'mweb'],
+                    'player_skip': ['webpage', 'configs']
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11; en_US) gzip'
+            }
+        }
+
+        # Check for optional cookies.txt in workspace root or current directory
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        cookie_candidates = [
+            'cookies.txt',
+            os.path.join(os.getcwd(), 'cookies.txt'),
+            os.path.join(project_root, 'cookies.txt')
+        ]
+        for candidate in cookie_candidates:
+            if os.path.exists(candidate) and os.path.isfile(candidate):
+                opts['cookiefile'] = candidate
+                logger.info(f"Found and loaded yt-dlp cookiefile: {candidate}")
+                break
+
+        return opts
+
+    @classmethod
+    def search_youtube(cls, query: str, max_results: int = 8) -> list:
         """
         Searches YouTube using ytsearch and returns a clean list of video metadata.
         """
         if not query or not query.strip():
             return []
             
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
+        ydl_opts = cls.get_base_ydl_opts()
+        ydl_opts.update({
             'extract_flat': True,
             'skip_download': True,
             'noplaylist': True,
-        }
+        })
         
         search_query = f"ytsearch{max_results}:{query.strip()}"
         logger.info(f"Executing YouTube search: '{query}'")
@@ -112,19 +147,18 @@ class AudioDownloader:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_output_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
             
-            ydl_opts = {
+            ydl_opts = cls.get_base_ydl_opts()
+            ydl_opts.update({
                 'format': 'bestaudio/best',
                 'outtmpl': temp_output_template,
                 'noplaylist': True,
-                'quiet': True,
-                'no_warnings': True,
                 'extract_flat': False,
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'wav',
                     'preferredquality': '192',
                 }],
-            }
+            })
 
             logger.info(f"Extracting audio from URL: {normalized_url}")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
