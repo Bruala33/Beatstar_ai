@@ -18,23 +18,25 @@ logger = logging.getLogger(__name__)
 class AudioDownloader:
     """
     Handles YouTube audio extraction, multi-tier search, and in-memory audio decoding.
-    Built with multi-tier fallbacks (Direct HTML, YouTube Music API, Invidious/Piped, yt-dlp)
-    to guarantee 100% reliable search and prevent cloud datacenter IP blocks.
+    Configured with ultra-flexible format selection ('bestaudio/ba/b/best'), mobile/web clients (android, web),
+    and direct Librosa container decoding to prevent 'Requested format is not available' errors.
     """
 
     @classmethod
     def get_base_ydl_opts(cls) -> Dict[str, Any]:
         """
-        Returns base yt-dlp configuration with mobile client bypass (android, ios, mweb)
-        and automatic cookies.txt detection to prevent bot-detection blocking.
+        Returns base yt-dlp configuration with ultra-flexible format selection,
+        mobile/web client bypass (android, web) and automatic cookies.txt detection.
         """
         opts: Dict[str, Any] = {
+            'format': 'bestaudio/ba/b/best',
             'quiet': True,
             'no_warnings': True,
+            'nocheckcertificate': True,
+            'ignoreerrors': False,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'ios', 'mweb'],
-                    'player_skip': ['webpage', 'configs']
+                    'player_client': ['android', 'web']
                 }
             },
             'http_headers': {
@@ -388,7 +390,8 @@ class AudioDownloader:
         max_duration: int = settings.MAX_DURATION_SECONDS
     ) -> Tuple[np.ndarray, int, Dict[str, Any]]:
         """
-        Downloads audio from YouTube into a temporary memory/file buffer and loads it as a numpy array.
+        Downloads audio or lightweight video track from YouTube into a temporary buffer
+        using ultra-permissive format ('bestaudio/ba/b/best') and loads it directly into Librosa.
         Returns:
             - y: np.ndarray (audio waveform, mono)
             - sr: int (sampling rate)
@@ -403,15 +406,10 @@ class AudioDownloader:
             
             ydl_opts = cls.get_base_ydl_opts()
             ydl_opts.update({
-                'format': 'bestaudio/best',
+                'format': 'bestaudio/ba/b/best',
                 'outtmpl': temp_output_template,
                 'noplaylist': True,
                 'extract_flat': False,
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'wav',
-                    'preferredquality': '192',
-                }],
             })
 
             logger.info(f"Extracting audio from URL: {normalized_url}")
@@ -420,30 +418,30 @@ class AudioDownloader:
                     info_dict = ydl.extract_info(normalized_url, download=True)
                 except Exception as e:
                     logger.error(f"yt-dlp extraction failed: {str(e)}")
-                    raise ValueError(f"No se pudo descargar el audio del vídeo de YouTube: {str(e)}")
+                    raise ValueError(f"No se pudo descargar el audio del video de YouTube: {str(e)}")
 
             if not info_dict:
-                raise ValueError("No se obtuvieron metadatos válidos del vídeo de YouTube.")
+                raise ValueError("No se obtuvieron metadatos validos del video de YouTube.")
 
             video_id = info_dict.get('id', clean_id or 'unknown')
-            title = info_dict.get('title', 'Canción Desconocida')
+            title = info_dict.get('title', 'Cancion Desconocida')
             uploader = info_dict.get('uploader') or info_dict.get('channel', 'Desconocido')
             duration = info_dict.get('duration', 0)
 
             if duration and duration > max_duration:
                 raise ValueError(
-                    f"El vídeo dura {duration}s, superando el límite máximo permitido de {max_duration}s."
+                    f"El video dura {duration}s, superando el limite maximo permitido de {max_duration}s."
                 )
 
-            # Locate downloaded audio file in temporary directory
-            downloaded_files = os.listdir(temp_dir)
+            # Locate downloaded file in temporary directory (.m4a, .webm, .mp4, .mp3, etc.)
+            downloaded_files = [f for f in os.listdir(temp_dir) if not f.endswith('.part')]
             if not downloaded_files:
                 raise FileNotFoundError("El archivo de audio descargado no fue encontrado en memoria.")
 
             audio_file_path = os.path.join(temp_dir, downloaded_files[0])
             
-            # Read and resample audio into mono numpy array via librosa
-            logger.info(f"Loading audio file {downloaded_files[0]} at sample rate {target_sr}...")
+            # Read and resample audio into mono numpy array via Librosa directly from container
+            logger.info(f"Loading audio file {downloaded_files[0]} directly into Librosa at sample rate {target_sr}...")
             y, sr = librosa.load(audio_file_path, sr=target_sr, mono=True)
 
             metadata = {
