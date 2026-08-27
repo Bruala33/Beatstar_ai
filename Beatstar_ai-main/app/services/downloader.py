@@ -63,9 +63,11 @@ class AudioDownloader:
             except Exception as e:
                 logger.warning(f"Failed to write YOUTUBE_COOKIES: {e}")
 
-        # 3. Local candidate files
+        # 3. Local and cloud secret candidate files (including Render Secret Files at /etc/secrets)
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         candidates = [
+            "/etc/secrets/cookies.txt",
+            "/etc/secrets/render_youtube_cookies.txt",
             os.path.join(project_root, "cookies.txt"),
             os.path.join(os.getcwd(), "cookies.txt"),
             os.path.join(tempfile.gettempdir(), "cookies.txt"),
