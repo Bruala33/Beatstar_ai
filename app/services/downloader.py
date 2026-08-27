@@ -18,30 +18,23 @@ logger = logging.getLogger(__name__)
 class AudioDownloader:
     """
     Handles YouTube audio extraction, multi-tier search, and in-memory audio decoding.
-    Configured with ultra-flexible format selection ('bestaudio/ba/b/best'), mobile/web clients (android, web),
-    and direct Librosa container decoding to prevent 'Requested format is not available' errors.
+    Configured with universal format selection ('ba/b/bestaudio/best'), cookiefile detection,
+    and automatic cleanup of downloads to save disk space.
     """
 
     @classmethod
     def get_base_ydl_opts(cls) -> Dict[str, Any]:
         """
-        Returns base yt-dlp configuration with ultra-flexible format selection,
-        mobile/web client bypass (android, web) and automatic cookies.txt detection.
+        Returns base yt-dlp configuration with universal format selection
+        and automatic cookies.txt detection.
         """
         opts: Dict[str, Any] = {
-            'format': 'bestaudio/ba/b/best',
+            'format': 'ba/b/bestaudio/best',
             'quiet': True,
             'no_warnings': True,
+            'noplaylist': True,
             'nocheckcertificate': True,
             'ignoreerrors': False,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web']
-                }
-            },
-            'http_headers': {
-                'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11; en_US) gzip'
-            }
         }
 
         # Check for optional cookies.txt in workspace root or current directory
@@ -390,8 +383,9 @@ class AudioDownloader:
         max_duration: int = settings.MAX_DURATION_SECONDS
     ) -> Tuple[np.ndarray, int, Dict[str, Any]]:
         """
-        Downloads audio or lightweight video track from YouTube into a temporary buffer
-        using ultra-permissive format ('bestaudio/ba/b/best') and loads it directly into Librosa.
+        Downloads audio or video track from YouTube into downloads/ directory
+        using universal format ('ba/b/bestaudio/best') and loads it directly into Librosa.
+        Deletes the temporary download file immediately after loading to conserve disk space.
         Returns:
             - y: np.ndarray (audio waveform, mono)
             - sr: int (sampling rate)
@@ -400,19 +394,43 @@ class AudioDownloader:
         clean_id = cls.extract_video_id(url)
         normalized_url = f"https://www.youtube.com/watch?v={clean_id}" if clean_id else url
 
-        # Create temporary working directory that gets cleaned up automatically
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_output_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
-            
-            ydl_opts = cls.get_base_ydl_opts()
-            ydl_opts.update({
-                'format': 'bestaudio/ba/b/best',
-                'outtmpl': temp_output_template,
-                'noplaylist': True,
-                'extract_flat': False,
-            })
+        # Define downloads folder
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        downloads_dir = os.path.join(project_root, "downloads")
+        os.makedirs(downloads_dir, exist_ok=True)
 
-            logger.info(f"Extracting audio from URL: {normalized_url}")
+        # Detect cookies if present
+        cookie_path = None
+        cookie_candidates = [
+            'cookies.txt',
+            os.path.join(os.getcwd(), 'cookies.txt'),
+            os.path.join(project_root, 'cookies.txt')
+        ]
+        for candidate in cookie_candidates:
+            if os.path.exists(candidate) and os.path.isfile(candidate):
+                cookie_path = candidate
+                break
+
+        outtmpl_pattern = os.path.join(downloads_dir, "%(id)s.%(ext)s")
+
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'noplaylist': True,
+            'nocheckcertificate': True,
+            'ignoreerrors': False,
+            # Universal format: accepts any audio or video available (never fails)
+            'format': 'ba/b/bestaudio/best',
+            'outtmpl': outtmpl_pattern,
+        }
+
+        if cookie_path:
+            ydl_opts['cookiefile'] = cookie_path
+
+        logger.info(f"Extracting audio from URL: {normalized_url}")
+        downloaded_file_path = None
+
+        try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 try:
                     info_dict = ydl.extract_info(normalized_url, download=True)
@@ -420,36 +438,54 @@ class AudioDownloader:
                     logger.error(f"yt-dlp extraction failed: {str(e)}")
                     raise ValueError(f"No se pudo descargar el audio del video de YouTube: {str(e)}")
 
-            if not info_dict:
-                raise ValueError("No se obtuvieron metadatos validos del video de YouTube.")
+                if not info_dict:
+                    raise ValueError("No se obtuvieron metadatos validos del video de YouTube.")
 
-            video_id = info_dict.get('id', clean_id or 'unknown')
-            title = info_dict.get('title', 'Cancion Desconocida')
-            uploader = info_dict.get('uploader') or info_dict.get('channel', 'Desconocido')
-            duration = info_dict.get('duration', 0)
+                video_id = info_dict.get('id', clean_id or 'unknown')
+                title = info_dict.get('title', 'Cancion Desconocida')
+                uploader = info_dict.get('uploader') or info_dict.get('channel', 'Desconocido')
+                duration = info_dict.get('duration', 0)
 
-            if duration and duration > max_duration:
-                raise ValueError(
-                    f"El video dura {duration}s, superando el limite maximo permitido de {max_duration}s."
-                )
+                if duration and duration > max_duration:
+                    raise ValueError(
+                        f"El video dura {duration}s, superando el limite maximo permitido de {max_duration}s."
+                    )
 
-            # Locate downloaded file in temporary directory (.m4a, .webm, .mp4, .mp3, etc.)
-            downloaded_files = [f for f in os.listdir(temp_dir) if not f.endswith('.part')]
-            if not downloaded_files:
-                raise FileNotFoundError("El archivo de audio descargado no fue encontrado en memoria.")
+                # Locate downloaded file path via ydl.prepare_filename or directory scan
+                expected_path = ydl.prepare_filename(info_dict)
+                if os.path.exists(expected_path):
+                    downloaded_file_path = expected_path
+                else:
+                    candidates = [
+                        os.path.join(downloads_dir, f)
+                        for f in os.listdir(downloads_dir)
+                        if f.startswith(video_id) and not f.endswith('.part')
+                    ]
+                    if candidates:
+                        downloaded_file_path = candidates[0]
 
-            audio_file_path = os.path.join(temp_dir, downloaded_files[0])
-            
-            # Read and resample audio into mono numpy array via Librosa directly from container
-            logger.info(f"Loading audio file {downloaded_files[0]} directly into Librosa at sample rate {target_sr}...")
-            y, sr = librosa.load(audio_file_path, sr=target_sr, mono=True)
+                if not downloaded_file_path or not os.path.exists(downloaded_file_path):
+                    raise FileNotFoundError(f"El archivo descargado para '{video_id}' no fue encontrado en {downloads_dir}.")
 
-            metadata = {
-                "video_id": video_id,
-                "title": title,
-                "uploader": uploader,
-                "duration": float(duration) if duration else float(len(y) / sr),
-                "thumbnail": info_dict.get('thumbnail', '')
-            }
+                # Read and resample audio into mono numpy array via Librosa directly from container
+                logger.info(f"Loading audio file {downloaded_file_path} directly into Librosa at sample rate {target_sr}...")
+                y, sr = librosa.load(downloaded_file_path, sr=target_sr, mono=True)
 
-            return y, sr, metadata
+                metadata = {
+                    "video_id": video_id,
+                    "title": title,
+                    "uploader": uploader,
+                    "duration": float(duration) if duration else float(len(y) / sr),
+                    "thumbnail": info_dict.get('thumbnail', '')
+                }
+
+                return y, sr, metadata
+
+        finally:
+            # Clean up the downloaded file to save disk space
+            if downloaded_file_path and os.path.exists(downloaded_file_path):
+                try:
+                    os.remove(downloaded_file_path)
+                    logger.info(f"Cleaned up temporary download file: {downloaded_file_path}")
+                except Exception as clean_err:
+                    logger.warning(f"Could not remove temporary file {downloaded_file_path}: {clean_err}")
