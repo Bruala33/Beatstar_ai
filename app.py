@@ -5,10 +5,9 @@ import json
 import base64
 import tempfile
 import logging
-import yt_dlp
+import requests
 import librosa
 import numpy as np
-import requests
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
@@ -18,6 +17,13 @@ try:
 except Exception:
     pass
 
+# yt-dlp es opcional: si no está instalado, solo se usan las APIs proxy
+try:
+    import yt_dlp
+    HAS_YTDLP = True
+except ImportError:
+    HAS_YTDLP = False
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("beatstar_strict")
 
@@ -25,11 +31,27 @@ static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app", "st
 app = Flask(__name__, static_folder=static_dir, static_url_path="/static")
 CORS(app)
 
+# ─── Instancias de APIs proxy (ordenadas por fiabilidad) ──────────────────────
+PIPED_INSTANCES = [
+    "https://pipedapi.adminforge.de",
+    "https://api.piped.yt",
+    "https://watchapi.whatever.social",
+    "https://pipedapi.kavin.rocks",
+]
+
+INVIDIOUS_INSTANCES = [
+    "https://invidious.nerdvpn.de",
+    "https://inv.nadeko.net",
+    "https://iv.datura.network",
+    "https://invidious.privacyredirect.com",
+    "https://invidious.projectsegfau.lt",
+]
+
+# ─── Cookie helpers ───────────────────────────────────────────────────────────
 def get_cookiefile_path():
     """
     Detecta automáticamente cookies en variables de entorno o archivos locales/secretos de Render.
     """
-    # 1. Base64 encoded cookies
     b64_val = os.environ.get("YOUTUBE_COOKIES_BASE64") or os.environ.get("COOKIES_BASE64")
     if b64_val and len(b64_val.strip()) > 20:
         try:
@@ -41,7 +63,6 @@ def get_cookiefile_path():
         except Exception as e:
             logger.warning(f"Error decodificando YOUTUBE_COOKIES_BASE64: {e}")
 
-    # 2. Raw text cookies en variable de entorno
     raw_val = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES_TXT")
     if raw_val and len(raw_val.strip()) > 20:
         try:
@@ -52,7 +73,6 @@ def get_cookiefile_path():
         except Exception as e:
             logger.warning(f"Error escribiendo YOUTUBE_COOKIES: {e}")
 
-    # 3. Archivos candidatos (Render Secret Files / local)
     project_root = os.path.dirname(os.path.abspath(__file__))
     candidates = [
         "/etc/secrets/cookies.txt",
@@ -68,6 +88,7 @@ def get_cookiefile_path():
 
     return None
 
+# ─── Extractores ──────────────────────────────────────────────────────────────
 def extract_video_id(url: str) -> str:
     patterns = [
         r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
@@ -82,25 +103,23 @@ def extract_video_id(url: str) -> str:
             return m.group(1)
     return (url or "").strip()
 
-def download_youtube_audio_strict(url: str, output_prefix: str = "audio_temp") -> str:
-    # Limpiar archivos temporales previos
-    for f in glob.glob(f"{output_prefix}.*"):
-        try:
-            os.remove(f)
-        except Exception:
-            pass
+# ─── Método 1: yt-dlp (funciona con cookies válidas o clientes móviles) ─────────
+def download_via_ytdlp(url: str, output_prefix: str) -> str:
+    if not HAS_YTDLP:
+        raise Exception("yt-dlp no está instalado")
 
     cookiefile = get_cookiefile_path()
 
     opts_list = [
+        # Intento 1: Clientes móviles oficiales (Android/iOS) - mayor tasa de éxito directa
         {
-            'format': 'ba/b',
+            'format': 'bestaudio/best',
             'outtmpl': f'{output_prefix}.%(ext)s',
             'quiet': True,
             'no_warnings': True,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web', 'mweb', 'ios', 'tv']
+                    'player_client': ['android', 'ios', 'mweb']
                 }
             },
             'postprocessors': [{
@@ -109,11 +128,46 @@ def download_youtube_audio_strict(url: str, output_prefix: str = "audio_temp") -
                 'preferredquality': '128',
             }],
         },
+        # Intento 2: iOS / Android Creator
         {
-            'format': 'ba/b',
+            'format': 'bestaudio/best',
             'outtmpl': f'{output_prefix}.%(ext)s',
             'quiet': True,
             'no_warnings': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['ios', 'android_creator']
+                }
+            },
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '128',
+            }],
+        },
+        # Intento 3: Sin restricción de cliente (yt-dlp estándar)
+        {
+            'format': 'bestaudio/best',
+            'outtmpl': f'{output_prefix}.%(ext)s',
+            'quiet': True,
+            'no_warnings': True,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '128',
+            }],
+        },
+        # Intento 4: Cliente Web
+        {
+            'format': 'bestaudio/best',
+            'outtmpl': f'{output_prefix}.%(ext)s',
+            'quiet': True,
+            'no_warnings': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web']
+                }
+            },
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -123,28 +177,181 @@ def download_youtube_audio_strict(url: str, output_prefix: str = "audio_temp") -
     ]
 
     last_err = None
-    for ydl_opts in opts_list:
+    for idx, ydl_opts in enumerate(opts_list, 1):
         if cookiefile:
             ydl_opts['cookiefile'] = cookiefile
-            logger.info(f"Usando cookiefile: {cookiefile}")
-
+        logger.info(f"yt-dlp intento {idx}/{len(opts_list)} (cookies={'SI' if cookiefile else 'NO'})...")
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
-
             files = glob.glob(f"{output_prefix}.*")
             if files:
+                logger.info(f"yt-dlp: descarga exitosa en intento {idx}: {files[0]}")
                 return files[0]
         except Exception as e:
             last_err = e
-            logger.warning(f"Intento de descarga con yt-dlp falló: {e}")
+            logger.warning(f"yt-dlp intento {idx} falló: {e}")
 
-    files = glob.glob(f"{output_prefix}.*")
-    if not files:
-        raise Exception(f"Fallo en descarga de audio: {last_err}")
+    raise Exception(f"yt-dlp: todos los intentos fallaron: {last_err}")
 
-    return files[0]
+# ─── Método 2: Piped API (proxy público, no necesita cookies) ─────────────────
+def download_via_piped(video_id: str, output_prefix: str) -> str:
+    """Descarga audio usando instancias públicas de Piped API."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+    }
 
+    last_err = None
+    for instance in PIPED_INSTANCES:
+        api_url = f"{instance}/streams/{video_id}"
+        logger.info(f"Piped: intentando {instance}...")
+        try:
+            resp = requests.get(api_url, headers=headers, timeout=12)
+            if resp.status_code != 200 or not resp.text.strip().startswith('{'):
+                logger.warning(f"Piped {instance}: HTTP {resp.status_code} o respuesta no-JSON")
+                continue
+
+            data = resp.json()
+            audio_streams = data.get("audioStreams", [])
+            if not audio_streams:
+                logger.warning(f"Piped {instance}: sin audio streams")
+                continue
+
+            # Buscar el mejor stream de audio (preferir mayor bitrate)
+            audio_streams.sort(key=lambda s: s.get("bitrate", 0), reverse=True)
+            stream_url = audio_streams[0].get("url")
+            if not stream_url:
+                continue
+
+            # Descargar el stream de audio
+            logger.info(f"Piped: descargando audio desde {instance} ({audio_streams[0].get('mimeType', 'unknown')})...")
+            audio_resp = requests.get(stream_url, headers=headers, timeout=60, stream=True)
+            if audio_resp.status_code != 200:
+                logger.warning(f"Piped: stream download falló HTTP {audio_resp.status_code}")
+                continue
+
+            mime = audio_streams[0].get("mimeType", "audio/webm")
+            ext = "webm" if "webm" in mime else "mp4" if "mp4" in mime else "ogg"
+            out_file = f"{output_prefix}.{ext}"
+
+            with open(out_file, "wb") as f:
+                for chunk in audio_resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            if os.path.exists(out_file) and os.path.getsize(out_file) > 1000:
+                logger.info(f"Piped: descarga exitosa desde {instance}: {out_file}")
+                return out_file
+
+        except Exception as e:
+            last_err = e
+            logger.warning(f"Piped {instance}: error: {e}")
+
+    raise Exception(f"Piped: todas las instancias fallaron: {last_err}")
+
+# ─── Método 3: Invidious API (proxy alternativo) ─────────────────────────────
+def download_via_invidious(video_id: str, output_prefix: str) -> str:
+    """Descarga audio usando instancias públicas de Invidious API."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+    }
+
+    last_err = None
+    for instance in INVIDIOUS_INSTANCES:
+        api_url = f"{instance}/api/v1/videos/{video_id}"
+        logger.info(f"Invidious: intentando {instance}...")
+        try:
+            resp = requests.get(api_url, headers=headers, timeout=12)
+            if resp.status_code != 200 or not resp.text.strip().startswith('{'):
+                logger.warning(f"Invidious {instance}: HTTP {resp.status_code} o respuesta no-JSON")
+                continue
+
+            data = resp.json()
+            adaptive = data.get("adaptiveFormats", [])
+            if not adaptive:
+                logger.warning(f"Invidious {instance}: sin adaptiveFormats")
+                continue
+
+            # Filtrar solo audio
+            audio_formats = [f for f in adaptive if f.get("type", "").startswith("audio/")]
+            if not audio_formats:
+                logger.warning(f"Invidious {instance}: sin streams de audio")
+                continue
+
+            # Preferir mayor bitrate
+            audio_formats.sort(key=lambda f: int(f.get("bitrate", "0")), reverse=True)
+            stream_url = audio_formats[0].get("url")
+            if not stream_url:
+                continue
+
+            # Descargar
+            logger.info(f"Invidious: descargando audio desde {instance}...")
+            audio_resp = requests.get(stream_url, headers=headers, timeout=60, stream=True)
+            if audio_resp.status_code != 200:
+                logger.warning(f"Invidious: stream falló HTTP {audio_resp.status_code}")
+                continue
+
+            mime = audio_formats[0].get("type", "audio/webm")
+            ext = "webm" if "webm" in mime else "mp4" if "mp4" in mime else "ogg"
+            out_file = f"{output_prefix}.{ext}"
+
+            with open(out_file, "wb") as f:
+                for chunk in audio_resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            if os.path.exists(out_file) and os.path.getsize(out_file) > 1000:
+                logger.info(f"Invidious: descarga exitosa desde {instance}: {out_file}")
+                return out_file
+
+        except Exception as e:
+            last_err = e
+            logger.warning(f"Invidious {instance}: error: {e}")
+
+    raise Exception(f"Invidious: todas las instancias fallaron: {last_err}")
+
+# ─── Función principal de descarga (prueba todos los métodos) ─────────────────
+def download_youtube_audio_strict(url: str, output_prefix: str = "audio_temp") -> str:
+    """Descarga audio de YouTube probando múltiples métodos en orden."""
+    # Limpiar archivos temporales previos
+    for f in glob.glob(f"{output_prefix}.*"):
+        try:
+            os.remove(f)
+        except Exception:
+            pass
+
+    video_id = extract_video_id(url)
+    errors = []
+
+    # Método 1: yt-dlp (funciona con cookies válidas o IP residencial)
+    try:
+        logger.info("=== Intentando descarga con yt-dlp ===")
+        return download_via_ytdlp(url, output_prefix)
+    except Exception as e:
+        errors.append(f"yt-dlp: {e}")
+        logger.warning(f"yt-dlp falló, probando APIs proxy: {e}")
+
+    # Método 2: Piped API (proxy público)
+    try:
+        logger.info("=== Intentando descarga con Piped API ===")
+        return download_via_piped(video_id, output_prefix)
+    except Exception as e:
+        errors.append(f"Piped: {e}")
+        logger.warning(f"Piped API falló, probando Invidious: {e}")
+
+    # Método 3: Invidious API (proxy alternativo)
+    try:
+        logger.info("=== Intentando descarga con Invidious API ===")
+        return download_via_invidious(video_id, output_prefix)
+    except Exception as e:
+        errors.append(f"Invidious: {e}")
+        logger.warning(f"Invidious API falló: {e}")
+
+    # Todos los métodos fallaron
+    error_summary = " | ".join(errors)
+    raise Exception(f"Fallo en descarga de audio (todos los métodos): {error_summary}")
+
+# ─── Rutas API ────────────────────────────────────────────────────────────────
 @app.route('/api/process', methods=['POST'])
 def process():
     url = (request.json or {}).get('url')
@@ -310,8 +517,11 @@ def health():
     return jsonify({
         "status": "healthy",
         "service": "Beatstar Beatmap Generator API",
-        "engine": "Flask + Librosa Strict (yt-dlp)",
-        "cookies_loaded": cookie_loaded
+        "engine": "Flask + Librosa Strict (yt-dlp + Piped + Invidious fallback)",
+        "cookies_loaded": cookie_loaded,
+        "ytdlp_available": HAS_YTDLP,
+        "piped_instances": len(PIPED_INSTANCES),
+        "invidious_instances": len(INVIDIOUS_INSTANCES),
     })
 
 @app.route('/', methods=['GET'])
