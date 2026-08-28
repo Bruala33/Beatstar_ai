@@ -1,19 +1,72 @@
 import os
 import re
+import glob
 import json
+import base64
+import tempfile
 import logging
-import requests
+import yt_dlp
 import librosa
 import numpy as np
+import requests
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
+try:
+    import static_ffmpeg
+    static_ffmpeg.add_paths()
+except Exception:
+    pass
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-logger = logging.getLogger("beatstar_app")
+logger = logging.getLogger("beatstar_strict")
 
 static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app", "static")
 app = Flask(__name__, static_folder=static_dir, static_url_path="/static")
 CORS(app)
+
+def get_cookiefile_path():
+    """
+    Detecta automáticamente cookies en variables de entorno o archivos locales/secretos de Render.
+    """
+    # 1. Base64 encoded cookies
+    b64_val = os.environ.get("YOUTUBE_COOKIES_BASE64") or os.environ.get("COOKIES_BASE64")
+    if b64_val and len(b64_val.strip()) > 20:
+        try:
+            decoded = base64.b64decode(b64_val.strip()).decode("utf-8", errors="ignore")
+            target_path = os.path.join(tempfile.gettempdir(), "render_youtube_cookies.txt")
+            with open(target_path, "w", encoding="utf-8") as f:
+                f.write(decoded)
+            return target_path
+        except Exception as e:
+            logger.warning(f"Error decodificando YOUTUBE_COOKIES_BASE64: {e}")
+
+    # 2. Raw text cookies en variable de entorno
+    raw_val = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES_TXT")
+    if raw_val and len(raw_val.strip()) > 20:
+        try:
+            target_path = os.path.join(tempfile.gettempdir(), "render_youtube_cookies.txt")
+            with open(target_path, "w", encoding="utf-8") as f:
+                f.write(raw_val.strip())
+            return target_path
+        except Exception as e:
+            logger.warning(f"Error escribiendo YOUTUBE_COOKIES: {e}")
+
+    # 3. Archivos candidatos (Render Secret Files / local)
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        "/etc/secrets/cookies.txt",
+        "/etc/secrets/render_youtube_cookies.txt",
+        os.path.join(project_root, "cookies.txt"),
+        os.path.join(os.getcwd(), "cookies.txt"),
+        os.path.join(tempfile.gettempdir(), "cookies.txt"),
+        "cookies.txt"
+    ]
+    for c in candidates:
+        if os.path.exists(c) and os.path.isfile(c) and os.path.getsize(c) > 0:
+            return c
+
+    return None
 
 def extract_video_id(url: str) -> str:
     patterns = [
@@ -29,228 +82,68 @@ def extract_video_id(url: str) -> str:
             return m.group(1)
     return (url or "").strip()
 
-def get_video_oembed_info(video_id: str):
-    try:
-        url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
-        res = requests.get(url, timeout=3)
-        if res.status_code == 200:
-            data = res.json()
-            return {
-                "title": data.get("title", f"YouTube Track ({video_id})"),
-                "author": data.get("author_name", "YouTube Music"),
-                "thumbnail": data.get("thumbnail_url", f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg")
-            }
-    except Exception as e:
-        logger.debug(f"oEmbed fetch error: {e}")
-    return {
-        "title": f"YouTube Track ({video_id})",
-        "author": "YouTube Music",
-        "thumbnail": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
-    }
-
-def download_audio_from_youtube(video_url):
-    audio_path = 'temp_audio.mp3'
-    if os.path.exists(audio_path):
+def download_youtube_audio_strict(url: str, output_prefix: str = "audio_temp") -> str:
+    # Limpiar archivos temporales previos
+    for f in glob.glob(f"{output_prefix}.*"):
         try:
-            os.remove(audio_path)
+            os.remove(f)
         except Exception:
             pass
-        
-    stream_url = None
-    headers = {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0'
-    }
-    
-    # 1. Petición rápida a APIs de Cobalt
-    cobalt_instances = [
-        'https://api.cobalt.tools/api/json',
-        'https://cobalt-api.kwiatekm.com/api/json',
-        'https://api.wuk.sh/api/json'
-    ]
-    payload = {
-        'url': video_url,
-        'downloadMode': 'audio',
-        'audioFormat': 'mp3'
-    }
-    
-    for c_url in cobalt_instances:
-        try:
-            res = requests.post(c_url, json=payload, headers=headers, timeout=2.5)
-            if res.status_code == 200:
-                data = res.json()
-                if 'url' in data and data['url']:
-                    stream_url = data['url']
-                    logger.info(f"Obtenido stream desde Cobalt: {c_url}")
-                    break
-        except Exception:
-            continue
 
-    # 2. Fallback rápido con Piped APIs
-    if not stream_url:
-        video_id = extract_video_id(video_url)
-        piped_instances = [
-            'https://pipedapi.kavin.rocks',
-            'https://pipedapi.leptons.xyz',
-            'https://piped-api.lunar.icu',
-            'https://api.piped.private.coffee'
-        ]
-        
-        for p_base in piped_instances:
-            try:
-                piped_res = requests.get(f'{p_base}/streams/{video_id}', headers=headers, timeout=2.5)
-                if piped_res.status_code == 200:
-                    p_data = piped_res.json()
-                    audio_streams = [s for s in p_data.get('audioStreams', []) if s.get('format') in ['M4A', 'WEBMA', 'MP3', 'WEBM', 'OPUS']]
-                    if not audio_streams and p_data.get('audioStreams'):
-                        audio_streams = p_data.get('audioStreams')
-                    if audio_streams and 'url' in audio_streams[0]:
-                        stream_url = audio_streams[0]['url']
-                        logger.info(f"Obtenido stream desde Piped: {p_base}")
-                        break
-            except Exception:
-                continue
+    cookiefile = get_cookiefile_path()
 
-    if stream_url:
-        try:
-            logger.info(f"Descargando stream de audio a {audio_path}...")
-            r = requests.get(stream_url, stream=True, timeout=15, headers=headers)
-            if r.status_code == 200:
-                with open(audio_path, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                if os.path.exists(audio_path) and os.path.getsize(audio_path) > 1000:
-                    return audio_path
-        except Exception as dl_err:
-            logger.warning(f"Error descargando stream de audio: {dl_err}")
+    ydl_opts = {
+        'format': 'ba/b',
+        'outtmpl': f'{output_prefix}.%(ext)s',
+        'quiet': True,
+        'no_warnings': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'android', 'android_creator']
+            }
+        },
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '128',
+        }],
+    }
 
-    return None
+    if cookiefile:
+        ydl_opts['cookiefile'] = cookiefile
+        logger.info(f"Usando cookiefile: {cookiefile}")
 
-def generate_rhythmic_beatmap(video_id: str, title: str, uploader: str, duration: float = 210.0, difficulty: str = "normal", bpm: float = 124.0):
-    """
-    Genera un beatmap rítmico sincronizado con notas 'tap', 'hold' y 'swipe'
-    adecuadas a la dificultad seleccionada.
-    """
-    beat_interval_ms = (60.0 / bpm) * 1000.0
-    
-    diff_settings = {
-        "easy": {"step_beats": 2.0, "hold_prob": 0.10, "swipe_prob": 0.05},
-        "normal": {"step_beats": 1.0, "hold_prob": 0.15, "swipe_prob": 0.10},
-        "hard": {"step_beats": 0.5, "hold_prob": 0.20, "swipe_prob": 0.15},
-        "expert": {"step_beats": 0.5, "hold_prob": 0.25, "swipe_prob": 0.20}
-    }
-    cfg = diff_settings.get(difficulty, diff_settings["normal"])
-    step_ms = beat_interval_ms * cfg["step_beats"]
-    
-    total_ms = int(duration * 1000)
-    current_time_ms = 2000
-    note_id = 1
-    last_lane = 1
-    
-    notes = []
-    lanes = [[], [], []]
-    tap_count = 0
-    hold_count = 0
-    swipe_count = 0
-    
-    while current_time_ms < total_ms - 2000:
-        lane = (note_id + (note_id // 3) + (note_id // 7)) % 3
-        
-        r = (note_id * 37) % 100 / 100.0
-        if r < cfg["swipe_prob"]:
-            n_type = "swipe"
-            directions = ["up", "down", "left", "right"]
-            direction = directions[note_id % 4]
-            duration_ms = None
-            end_timestamp_ms = None
-            swipe_count += 1
-        elif r < (cfg["swipe_prob"] + cfg["hold_prob"]):
-            n_type = "hold"
-            direction = None
-            duration_ms = int(beat_interval_ms * 2)
-            end_timestamp_ms = current_time_ms + duration_ms
-            hold_count += 1
-        else:
-            n_type = "tap"
-            direction = None
-            duration_ms = None
-            end_timestamp_ms = None
-            tap_count += 1
-            
-        bands = ["bass", "mid", "high"]
-        band = bands[lane]
-        
-        note_obj = {
-            "id": note_id,
-            "lane": lane,
-            "type": n_type,
-            "timestamp_ms": current_time_ms,
-            "duration_ms": duration_ms,
-            "end_timestamp_ms": end_timestamp_ms,
-            "direction": direction,
-            "frequency_band": band,
-            "energy": 0.85
-        }
-        
-        notes.append(note_obj)
-        lanes[lane].append(note_obj)
-        note_id += 1
-        
-        if n_type == "hold":
-            current_time_ms += duration_ms + int(step_ms)
-        else:
-            current_time_ms += int(step_ms)
-            
-    metadata = {
-        "video_id": video_id,
-        "title": title,
-        "uploader": uploader,
-        "duration_seconds": duration,
-        "bpm": round(bpm, 1),
-        "total_notes": len(notes),
-        "tap_count": tap_count,
-        "hold_count": hold_count,
-        "swipe_count": swipe_count,
-        "difficulty": difficulty,
-        "density_notes_per_second": round(len(notes) / max(duration, 1), 2)
-    }
-    
-    return {
-        "video_id": video_id,
-        "metadata": metadata,
-        "notes": notes,
-        "lanes": lanes
-    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
+
+    files = glob.glob(f"{output_prefix}.*")
+    if not files:
+        raise Exception("Fallo en descarga de audio: no se generó ningún archivo de audio")
+
+    return files[0]
 
 @app.route('/api/process', methods=['POST'])
 def process():
-    body = request.json or {}
-    url = body.get('url')
+    url = (request.json or {}).get('url')
     if not url:
-        return jsonify({'error': 'URL no proporcionada'}), 400
-        
+        return jsonify({'error': 'URL requerida'}), 400
+
     try:
-        video_id = extract_video_id(url)
-        audio_file = download_audio_from_youtube(url)
-        
-        if audio_file and os.path.exists(audio_file):
-            y, sr = librosa.load(audio_file, sr=16000, duration=120)
-            onset_env = librosa.onset.onset_strength(y=y, sr=sr)
-            peaks = librosa.util.peak_pick(onset_env, pre_max=3, post_max=3, pre_avg=3, post_avg=5, delta=0.5, wait=10)
-            times = librosa.frames_to_time(peaks, sr=sr)
-            notes = [{'time': float(round(t, 3)), 'lane': int(i % 3)} for i, t in enumerate(times)]
-            dur = float(librosa.get_duration(y=y, sr=sr))
-            return jsonify({'status': 'ok', 'notes': notes, 'duration': dur})
-        else:
-            dur = 180.0
-            bm = generate_rhythmic_beatmap(video_id, f"Track {video_id}", "YouTube Music", duration=dur)
-            notes = [{'time': float(round(n['timestamp_ms'] / 1000.0, 3)), 'lane': n['lane']} for n in bm['notes']]
-            return jsonify({'status': 'ok', 'notes': notes, 'duration': dur})
+        audio_file = download_youtube_audio_strict(url, output_prefix="audio_temp_process")
+
+        # Detección de ritmo real con Librosa (máximo 120s para memoria de Render)
+        logger.info(f"Cargando {audio_file} con Librosa para análisis real...")
+        y, sr = librosa.load(audio_file, sr=16000, duration=120)
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        peaks = librosa.util.peak_pick(onset_env, pre_max=3, post_max=3, pre_avg=3, post_avg=5, delta=0.5, wait=10)
+        times = librosa.frames_to_time(peaks, sr=sr)
+
+        notes = [{'time': float(round(t, 3)), 'lane': int(i % 3)} for i, t in enumerate(times)]
+        return jsonify({'status': 'ok', 'notes': notes, 'duration': float(librosa.get_duration(y=y, sr=sr))})
+
     except Exception as e:
-        logger.exception(f"Error en /api/process: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception(f"Error en análisis de audio real: {e}")
+        return jsonify({'error': f"Error en análisis de audio real: {str(e)}"}), 500
 
 @app.route('/api/v1/beatmap/generate', methods=['POST'])
 def generate_beatmap():
@@ -258,92 +151,73 @@ def generate_beatmap():
     url = body.get('url')
     difficulty = body.get('difficulty', 'normal')
     if not url:
-        return jsonify({'detail': 'URL no proporcionada'}), 400
-        
+        return jsonify({'detail': 'URL requerida'}), 400
+
     video_id = extract_video_id(url)
-    info = get_video_oembed_info(video_id)
-    title = info["title"]
-    uploader = info["author"]
-    
+
     try:
-        audio_file = download_audio_from_youtube(url)
-        
-        if audio_file and os.path.exists(audio_file):
-            logger.info(f"Analizando audio con Librosa para '{title}'...")
-            y, sr = librosa.load(audio_file, sr=16000, duration=240)
-            
-            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-            bpm = float(tempo[0]) if isinstance(tempo, (np.ndarray, list)) else float(tempo)
-            if bpm < 50: bpm = 120.0
-            elif bpm > 190: bpm = bpm / 2.0
-            
-            onset_env = librosa.onset.onset_strength(y=y, sr=sr)
-            peaks = librosa.util.peak_pick(onset_env, pre_max=3, post_max=3, pre_avg=3, post_avg=5, delta=0.38, wait=8)
-            times = librosa.frames_to_time(peaks, sr=sr)
-            dur_total = float(librosa.get_duration(y=y, sr=sr))
-            
-            notes_list = []
-            lanes = [[], [], []]
-            for i, t in enumerate(times):
-                time_ms = int(t * 1000)
-                lane = int(i % 3)
-                note_obj = {
-                    "id": i + 1,
-                    "lane": lane,
-                    "type": "tap",
-                    "timestamp_ms": time_ms,
-                    "duration_ms": None,
-                    "end_timestamp_ms": None,
-                    "direction": None,
-                    "frequency_band": ["bass", "mid", "high"][lane],
-                    "energy": 0.85
-                }
-                notes_list.append(note_obj)
-                lanes[lane].append(note_obj)
-                
-            metadata = {
-                "video_id": video_id,
-                "title": title,
-                "uploader": uploader,
-                "duration_seconds": dur_total,
-                "bpm": round(bpm, 1),
-                "total_notes": len(notes_list),
-                "tap_count": len(notes_list),
-                "hold_count": 0,
-                "swipe_count": 0,
-                "difficulty": difficulty,
-                "density_notes_per_second": round(len(notes_list) / max(dur_total, 1), 2)
+        audio_file = download_youtube_audio_strict(url, output_prefix=f"audio_temp_{video_id}")
+
+        logger.info(f"Analizando transitorios reales con Librosa para {video_id}...")
+        y, sr = librosa.load(audio_file, sr=16000, duration=180)
+        dur_total = float(librosa.get_duration(y=y, sr=sr))
+
+        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+        bpm = float(tempo[0]) if isinstance(tempo, (np.ndarray, list)) else float(tempo)
+        if bpm < 50: bpm = 120.0
+        elif bpm > 190: bpm = bpm / 2.0
+
+        # Umbrales según dificultad
+        delta_map = {"easy": 0.50, "normal": 0.38, "hard": 0.28, "expert": 0.22}
+        delta = delta_map.get(difficulty, 0.38)
+
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        peaks = librosa.util.peak_pick(onset_env, pre_max=3, post_max=3, pre_avg=3, post_avg=5, delta=delta, wait=8)
+        times = librosa.frames_to_time(peaks, sr=sr)
+
+        notes_list = []
+        lanes = [[], [], []]
+        for i, t in enumerate(times):
+            time_ms = int(t * 1000)
+            lane = int(i % 3)
+            note_obj = {
+                "id": i + 1,
+                "lane": lane,
+                "type": "tap",
+                "timestamp_ms": time_ms,
+                "duration_ms": None,
+                "end_timestamp_ms": None,
+                "direction": None,
+                "frequency_band": ["bass", "mid", "high"][lane],
+                "energy": 0.85
             }
-            
-            return jsonify({
-                "video_id": video_id,
-                "metadata": metadata,
-                "notes": notes_list,
-                "lanes": lanes
-            })
-        else:
-            logger.info(f"Generando beatmap rítmico adaptativo para '{title}' ({video_id})...")
-            bm = generate_rhythmic_beatmap(
-                video_id=video_id,
-                title=title,
-                uploader=uploader,
-                duration=220.0,
-                difficulty=difficulty,
-                bpm=124.0
-            )
-            return jsonify(bm)
-            
+            notes_list.append(note_obj)
+            lanes[lane].append(note_obj)
+
+        metadata = {
+            "video_id": video_id,
+            "title": f"YouTube Track ({video_id})",
+            "uploader": "YouTube",
+            "duration_seconds": dur_total,
+            "bpm": round(bpm, 1),
+            "total_notes": len(notes_list),
+            "tap_count": len(notes_list),
+            "hold_count": 0,
+            "swipe_count": 0,
+            "difficulty": difficulty,
+            "density_notes_per_second": round(len(notes_list) / max(dur_total, 1), 2)
+        }
+
+        return jsonify({
+            "video_id": video_id,
+            "metadata": metadata,
+            "notes": notes_list,
+            "lanes": lanes
+        })
+
     except Exception as e:
-        logger.exception(f"Error generando beatmap: {e}")
-        bm = generate_rhythmic_beatmap(
-            video_id=video_id,
-            title=title,
-            uploader=uploader,
-            duration=200.0,
-            difficulty=difficulty,
-            bpm=120.0
-        )
-        return jsonify(bm)
+        logger.exception(f"Error estricto en generate_beatmap: {e}")
+        return jsonify({'detail': f"Error en análisis de audio real: {str(e)}"}), 500
 
 @app.route('/api/search', methods=['GET'])
 @app.route('/api/v1/search', methods=['GET'])
@@ -356,14 +230,14 @@ def search():
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept-Language": "es-ES,es;q=0.9,en;q=0.8"
         }
-        res = requests.get("https://www.youtube.com/results", params={"search_query": q}, headers=headers, timeout=5)
+        res = requests.get("https://www.youtube.com/results", params={"search_query": q}, headers=headers, timeout=6)
         if res.status_code != 200:
             return jsonify([])
-            
+
         m = re.search(r"var ytInitialData = ({.+?});</script>", res.text) or re.search(r"ytInitialData\s*=\s*({.+?});</script>", res.text)
         if not m:
             return jsonify([])
-            
+
         data = json.loads(m.group(1))
         videos = []
         sections = data.get("contents", {}).get("twoColumnSearchResultsRenderer", {}).get("primaryContents", {}).get("sectionListRenderer", {}).get("contents", [])
@@ -381,7 +255,7 @@ def search():
                         parts = [int(p) for p in dur_str.split(":") if p.isdigit()]
                         if len(parts) == 2: sec_count = parts[0] * 60 + parts[1]
                         elif len(parts) == 3: sec_count = parts[0] * 3600 + parts[1] * 60 + parts[2]
-                        
+
                     videos.append({
                         "id": vid_id,
                         "title": title,
@@ -409,14 +283,20 @@ def import_playlist():
 
 @app.route('/api/v1/health', methods=['GET'])
 def health():
-    return jsonify({"status": "healthy", "service": "Beatstar Beatmap Generator API", "engine": "Flask + Librosa"})
+    cookie_loaded = get_cookiefile_path() is not None
+    return jsonify({
+        "status": "healthy",
+        "service": "Beatstar Beatmap Generator API",
+        "engine": "Flask + Librosa Strict (yt-dlp)",
+        "cookies_loaded": cookie_loaded
+    })
 
 @app.route('/', methods=['GET'])
 def index():
     html_path = os.path.join(static_dir, "index.html")
     if os.path.exists(html_path):
         return send_from_directory(static_dir, "index.html")
-    return "<h1>Beatstar AI API</h1><p>Running Flask + Librosa</p>"
+    return "<h1>Beatstar AI API</h1><p>Flask + Strict Librosa</p>"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
