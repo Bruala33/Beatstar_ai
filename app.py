@@ -92,33 +92,56 @@ def download_youtube_audio_strict(url: str, output_prefix: str = "audio_temp") -
 
     cookiefile = get_cookiefile_path()
 
-    ydl_opts = {
-        'format': 'ba/b',
-        'outtmpl': f'{output_prefix}.%(ext)s',
-        'quiet': True,
-        'no_warnings': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios', 'android', 'android_creator']
-            }
+    opts_list = [
+        {
+            'format': 'ba/b',
+            'outtmpl': f'{output_prefix}.%(ext)s',
+            'quiet': True,
+            'no_warnings': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web', 'mweb', 'ios', 'tv']
+                }
+            },
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '128',
+            }],
         },
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '128',
-        }],
-    }
+        {
+            'format': 'ba/b',
+            'outtmpl': f'{output_prefix}.%(ext)s',
+            'quiet': True,
+            'no_warnings': True,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '128',
+            }],
+        }
+    ]
 
-    if cookiefile:
-        ydl_opts['cookiefile'] = cookiefile
-        logger.info(f"Usando cookiefile: {cookiefile}")
+    last_err = None
+    for ydl_opts in opts_list:
+        if cookiefile:
+            ydl_opts['cookiefile'] = cookiefile
+            logger.info(f"Usando cookiefile: {cookiefile}")
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
+            files = glob.glob(f"{output_prefix}.*")
+            if files:
+                return files[0]
+        except Exception as e:
+            last_err = e
+            logger.warning(f"Intento de descarga con yt-dlp falló: {e}")
 
     files = glob.glob(f"{output_prefix}.*")
     if not files:
-        raise Exception("Fallo en descarga de audio: no se generó ningún archivo de audio")
+        raise Exception(f"Fallo en descarga de audio: {last_err}")
 
     return files[0]
 
