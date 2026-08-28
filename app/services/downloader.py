@@ -29,10 +29,62 @@ class AudioDownloader:
     """
 
     @classmethod
+    def get_cookiefile_path(cls) -> Optional[str]:
+        """
+        Resolves cookies from:
+        1. YOUTUBE_COOKIES_BASE64 / COOKIES_BASE64 environment variable (for Render / Heroku / Cloud)
+        2. YOUTUBE_COOKIES / COOKIES_TXT environment variable (raw text)
+        3. Local cookies.txt in project root, cwd, or /tmp
+        """
+        import base64
+
+        # 1. Base64 environment variable (ideal for Render dashboard)
+        b64_val = os.environ.get("YOUTUBE_COOKIES_BASE64") or os.environ.get("COOKIES_BASE64")
+        if b64_val and len(b64_val.strip()) > 20:
+            try:
+                decoded = base64.b64decode(b64_val.strip()).decode("utf-8", errors="ignore")
+                target_path = os.path.join(tempfile.gettempdir(), "render_youtube_cookies.txt")
+                with open(target_path, "w", encoding="utf-8") as f:
+                    f.write(decoded)
+                logger.info(f"Loaded YouTube cookies from YOUTUBE_COOKIES_BASE64 into {target_path}")
+                return target_path
+            except Exception as e:
+                logger.warning(f"Failed to decode YOUTUBE_COOKIES_BASE64: {e}")
+
+        # 2. Plain text environment variable
+        raw_val = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES_TXT")
+        if raw_val and len(raw_val.strip()) > 20:
+            try:
+                target_path = os.path.join(tempfile.gettempdir(), "render_youtube_cookies.txt")
+                with open(target_path, "w", encoding="utf-8") as f:
+                    f.write(raw_val.strip())
+                logger.info(f"Loaded YouTube cookies from YOUTUBE_COOKIES into {target_path}")
+                return target_path
+            except Exception as e:
+                logger.warning(f"Failed to write YOUTUBE_COOKIES: {e}")
+
+        # 3. Local and cloud secret candidate files (including Render Secret Files at /etc/secrets)
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        candidates = [
+            "/etc/secrets/cookies.txt",
+            "/etc/secrets/render_youtube_cookies.txt",
+            os.path.join(project_root, "cookies.txt"),
+            os.path.join(os.getcwd(), "cookies.txt"),
+            os.path.join(tempfile.gettempdir(), "cookies.txt"),
+            "cookies.txt"
+        ]
+        for c in candidates:
+            if os.path.exists(c) and os.path.isfile(c) and os.path.getsize(c) > 0:
+                logger.info(f"Loaded YouTube cookies from file: {c}")
+                return c
+
+        return None
+
+    @classmethod
     def get_base_ydl_opts(cls) -> Dict[str, Any]:
         """
-        Returns base yt-dlp configuration with official mobile client extraction
-        to bypass bot verification and datacenter blocks.
+        Returns base yt-dlp configuration with mobile client extraction
+        and automatic cookie detection for cloud/local environments.
         """
         opts: Dict[str, Any] = {
             'format': 'bestaudio/best',
@@ -43,11 +95,13 @@ class AudioDownloader:
             'ignoreerrors': False,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'ios', 'android_creator'],
-                    'player_skip': ['webpage', 'configs']
+                    'player_client': ['android', 'ios'],
                 }
             },
         }
+        cookie_path = cls.get_cookiefile_path()
+        if cookie_path:
+            opts['cookiefile'] = cookie_path
         return opts
 
     @classmethod
@@ -400,6 +454,8 @@ class AudioDownloader:
 
         outtmpl_pattern = os.path.join(downloads_dir, "%(id)s.%(ext)s")
 
+        cookie_path = cls.get_cookiefile_path()
+
         ydl_opts: Dict[str, Any] = {
             'format': 'bestaudio/best',
             'quiet': True,
@@ -410,8 +466,7 @@ class AudioDownloader:
             'outtmpl': outtmpl_pattern,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'ios', 'android_creator'],
-                    'player_skip': ['webpage', 'configs']
+                    'player_client': ['android', 'ios'],
                 }
             },
             'postprocessors': [{
@@ -420,6 +475,10 @@ class AudioDownloader:
                 'preferredquality': '128',
             }],
         }
+
+        if cookie_path:
+            ydl_opts['cookiefile'] = cookie_path
+            logger.info(f"Using cookiefile for YouTube extraction: {cookie_path}")
 
         logger.info(f"Extracting audio from URL: {normalized_url}")
         downloaded_file_path = None
@@ -430,8 +489,15 @@ class AudioDownloader:
                 try:
                     info_dict = ydl.extract_info(normalized_url, download=True)
                 except Exception as e:
-                    logger.error(f"yt-dlp extraction failed: {str(e)}")
-                    raise ValueError(f"No se pudo descargar el audio del video de YouTube: {str(e)}")
+                    err_msg = str(e)
+                    logger.error(f"yt-dlp extraction failed: {err_msg}")
+                    if "Sign in to confirm you're not a bot" in err_msg or "bot" in err_msg.lower():
+                        raise ValueError(
+                            "YouTube ha bloqueado la IP del servidor en la nube (Render) solicitando verificación de bot. "
+                            "Para solucionarlo en Render, añade la variable de entorno YOUTUBE_COOKIES_BASE64 "
+                            "con tus cookies en base64 en el Dashboard de Render > Environment Variables."
+                        )
+                    raise ValueError(f"No se pudo descargar el audio del video de YouTube: {err_msg}")
 
                 if not info_dict:
                     raise ValueError("No se obtuvieron metadatos validos del video de YouTube.")

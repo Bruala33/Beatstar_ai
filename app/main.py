@@ -59,18 +59,27 @@ if os.path.exists(static_dir):
 downloader = AudioDownloader()
 analyzer = AudioAnalyzer(sr=settings.SAMPLE_RATE, hop_length=settings.HOP_LENGTH)
 
+# Check and log cookie status at startup
+cookie_file = AudioDownloader.get_cookiefile_path()
+if cookie_file:
+    logger.info(f"==> YouTube cookies successfully loaded from: {cookie_file}")
+else:
+    logger.warning("==> No YouTube cookies found (YOUTUBE_COOKIES_BASE64 not set or empty).")
+
 
 @app.get("/api/v1/health", tags=["Health"])
 async def health_check() -> Dict[str, Any]:
     """
     Verifica el estado del servidor y los parámetros de configuración.
     """
+    cookie_active = AudioDownloader.get_cookiefile_path() is not None
     return {
         "status": "healthy",
         "service": settings.PROJECT_NAME,
         "version": settings.VERSION,
         "sample_rate": settings.SAMPLE_RATE,
-        "num_lanes": settings.NUM_LANES
+        "num_lanes": settings.NUM_LANES,
+        "cookies_loaded": cookie_active
     }
 
 
