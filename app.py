@@ -17,7 +17,6 @@ try:
 except Exception:
     pass
 
-# yt-dlp es opcional: si no está instalado, solo se usan las APIs proxy
 try:
     import yt_dlp
     HAS_YTDLP = True
@@ -31,27 +30,23 @@ static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app", "st
 app = Flask(__name__, static_folder=static_dir, static_url_path="/static")
 CORS(app)
 
-# ─── Instancias de APIs proxy (ordenadas por fiabilidad) ──────────────────────
+# ─── Instancias de APIs proxy (fallback si la descarga directa fallase) ───────
 PIPED_INSTANCES = [
     "https://pipedapi.adminforge.de",
-    "https://api.piped.yt",
-    "https://watchapi.whatever.social",
-    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.drgns.space",
+    "https://pipedapi.r4fo.com",
+    "https://piped-api.lunar.icu",
 ]
 
 INVIDIOUS_INSTANCES = [
     "https://invidious.nerdvpn.de",
     "https://inv.nadeko.net",
-    "https://iv.datura.network",
-    "https://invidious.privacyredirect.com",
-    "https://invidious.projectsegfau.lt",
+    "https://invidious.private.coffee",
+    "https://yewtu.be",
 ]
 
-# ─── Cookie helpers ───────────────────────────────────────────────────────────
 def get_cookiefile_path():
-    """
-    Detecta automáticamente cookies en variables de entorno o archivos locales/secretos de Render.
-    """
+    """Detecta automáticamente cookies en variables de entorno o archivos locales."""
     b64_val = os.environ.get("YOUTUBE_COOKIES_BASE64") or os.environ.get("COOKIES_BASE64")
     if b64_val and len(b64_val.strip()) > 20:
         try:
@@ -88,8 +83,8 @@ def get_cookiefile_path():
 
     return None
 
-# ─── Extractores ──────────────────────────────────────────────────────────────
 def extract_video_id(url: str) -> str:
+    """Extrae el ID del video de cualquier formato de URL de YouTube"""
     patterns = [
         r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
         r'youtu\.be\/([0-9A-Za-z_-]{11})',
@@ -103,7 +98,7 @@ def extract_video_id(url: str) -> str:
             return m.group(1)
     return (url or "").strip()
 
-# ─── Método 1: yt-dlp (funciona con cookies válidas o clientes móviles) ─────────
+# ─── Método 1: yt-dlp con emulación móvil InnerTube y player_skip ─────────────
 def download_via_ytdlp(url: str, output_prefix: str) -> str:
     if not HAS_YTDLP:
         raise Exception("yt-dlp no está instalado")
@@ -111,15 +106,16 @@ def download_via_ytdlp(url: str, output_prefix: str) -> str:
     cookiefile = get_cookiefile_path()
 
     opts_list = [
-        # Intento 1: Clientes móviles oficiales (Android/iOS) - mayor tasa de éxito directa
+        # 1. Android mobile client (sin tocar webpage para evitar bot check en datacenter)
         {
-            'format': 'bestaudio/best',
+            'format': 'ba/b',
             'outtmpl': f'{output_prefix}.%(ext)s',
             'quiet': True,
             'no_warnings': True,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'ios', 'mweb']
+                    'player_client': ['android'],
+                    'player_skip': ['webpage', 'configs']
                 }
             },
             'postprocessors': [{
@@ -128,15 +124,16 @@ def download_via_ytdlp(url: str, output_prefix: str) -> str:
                 'preferredquality': '128',
             }],
         },
-        # Intento 2: iOS / Android Creator
+        # 2. iOS + Android combinados
         {
-            'format': 'bestaudio/best',
+            'format': 'ba/b',
             'outtmpl': f'{output_prefix}.%(ext)s',
             'quiet': True,
             'no_warnings': True,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['ios', 'android_creator']
+                    'player_client': ['ios', 'android', 'mweb'],
+                    'player_skip': ['webpage', 'configs']
                 }
             },
             'postprocessors': [{
@@ -145,29 +142,12 @@ def download_via_ytdlp(url: str, output_prefix: str) -> str:
                 'preferredquality': '128',
             }],
         },
-        # Intento 3: Sin restricción de cliente (yt-dlp estándar)
+        # 3. Formato estándar
         {
             'format': 'bestaudio/best',
             'outtmpl': f'{output_prefix}.%(ext)s',
             'quiet': True,
             'no_warnings': True,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '128',
-            }],
-        },
-        # Intento 4: Cliente Web
-        {
-            'format': 'bestaudio/best',
-            'outtmpl': f'{output_prefix}.%(ext)s',
-            'quiet': True,
-            'no_warnings': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['web']
-                }
-            },
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -194,9 +174,9 @@ def download_via_ytdlp(url: str, output_prefix: str) -> str:
 
     raise Exception(f"yt-dlp: todos los intentos fallaron: {last_err}")
 
-# ─── Método 2: Piped API (proxy público, no necesita cookies) ─────────────────
+# ─── Método 2: Piped API (proxy público sin bloqueo de IP) ────────────────────
 def download_via_piped(video_id: str, output_prefix: str) -> str:
-    """Descarga audio usando instancias públicas de Piped API."""
+    """Descarga audio usando instancias de Piped API."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "application/json",
@@ -207,9 +187,9 @@ def download_via_piped(video_id: str, output_prefix: str) -> str:
         api_url = f"{instance}/streams/{video_id}"
         logger.info(f"Piped: intentando {instance}...")
         try:
-            resp = requests.get(api_url, headers=headers, timeout=12)
+            resp = requests.get(api_url, headers=headers, timeout=10)
             if resp.status_code != 200 or not resp.text.strip().startswith('{'):
-                logger.warning(f"Piped {instance}: HTTP {resp.status_code} o respuesta no-JSON")
+                logger.warning(f"Piped {instance}: HTTP {resp.status_code}")
                 continue
 
             data = resp.json()
@@ -218,17 +198,14 @@ def download_via_piped(video_id: str, output_prefix: str) -> str:
                 logger.warning(f"Piped {instance}: sin audio streams")
                 continue
 
-            # Buscar el mejor stream de audio (preferir mayor bitrate)
             audio_streams.sort(key=lambda s: s.get("bitrate", 0), reverse=True)
             stream_url = audio_streams[0].get("url")
             if not stream_url:
                 continue
 
-            # Descargar el stream de audio
-            logger.info(f"Piped: descargando audio desde {instance} ({audio_streams[0].get('mimeType', 'unknown')})...")
+            logger.info(f"Piped: descargando stream desde {instance}...")
             audio_resp = requests.get(stream_url, headers=headers, timeout=60, stream=True)
             if audio_resp.status_code != 200:
-                logger.warning(f"Piped: stream download falló HTTP {audio_resp.status_code}")
                 continue
 
             mime = audio_streams[0].get("mimeType", "audio/webm")
@@ -236,24 +213,24 @@ def download_via_piped(video_id: str, output_prefix: str) -> str:
             out_file = f"{output_prefix}.{ext}"
 
             with open(out_file, "wb") as f:
-                for chunk in audio_resp.iter_content(chunk_size=8192):
+                for chunk in audio_resp.iter_content(chunk_size=16384):
                     f.write(chunk)
 
             if os.path.exists(out_file) and os.path.getsize(out_file) > 1000:
-                logger.info(f"Piped: descarga exitosa desde {instance}: {out_file}")
+                logger.info(f"Piped: descarga exitosa: {out_file}")
                 return out_file
 
         except Exception as e:
             last_err = e
-            logger.warning(f"Piped {instance}: error: {e}")
+            logger.warning(f"Piped {instance} error: {e}")
 
     raise Exception(f"Piped: todas las instancias fallaron: {last_err}")
 
-# ─── Método 3: Invidious API (proxy alternativo) ─────────────────────────────
+# ─── Método 3: Invidious API ──────────────────────────────────────────────────
 def download_via_invidious(video_id: str, output_prefix: str) -> str:
     """Descarga audio usando instancias públicas de Invidious API."""
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json",
     }
 
@@ -262,34 +239,23 @@ def download_via_invidious(video_id: str, output_prefix: str) -> str:
         api_url = f"{instance}/api/v1/videos/{video_id}"
         logger.info(f"Invidious: intentando {instance}...")
         try:
-            resp = requests.get(api_url, headers=headers, timeout=12)
+            resp = requests.get(api_url, headers=headers, timeout=10)
             if resp.status_code != 200 or not resp.text.strip().startswith('{'):
-                logger.warning(f"Invidious {instance}: HTTP {resp.status_code} o respuesta no-JSON")
                 continue
 
             data = resp.json()
             adaptive = data.get("adaptiveFormats", [])
-            if not adaptive:
-                logger.warning(f"Invidious {instance}: sin adaptiveFormats")
-                continue
-
-            # Filtrar solo audio
             audio_formats = [f for f in adaptive if f.get("type", "").startswith("audio/")]
             if not audio_formats:
-                logger.warning(f"Invidious {instance}: sin streams de audio")
                 continue
 
-            # Preferir mayor bitrate
             audio_formats.sort(key=lambda f: int(f.get("bitrate", "0")), reverse=True)
             stream_url = audio_formats[0].get("url")
             if not stream_url:
                 continue
 
-            # Descargar
-            logger.info(f"Invidious: descargando audio desde {instance}...")
             audio_resp = requests.get(stream_url, headers=headers, timeout=60, stream=True)
             if audio_resp.status_code != 200:
-                logger.warning(f"Invidious: stream falló HTTP {audio_resp.status_code}")
                 continue
 
             mime = audio_formats[0].get("type", "audio/webm")
@@ -297,23 +263,22 @@ def download_via_invidious(video_id: str, output_prefix: str) -> str:
             out_file = f"{output_prefix}.{ext}"
 
             with open(out_file, "wb") as f:
-                for chunk in audio_resp.iter_content(chunk_size=8192):
+                for chunk in audio_resp.iter_content(chunk_size=16384):
                     f.write(chunk)
 
             if os.path.exists(out_file) and os.path.getsize(out_file) > 1000:
-                logger.info(f"Invidious: descarga exitosa desde {instance}: {out_file}")
+                logger.info(f"Invidious: descarga exitosa: {out_file}")
                 return out_file
 
         except Exception as e:
             last_err = e
-            logger.warning(f"Invidious {instance}: error: {e}")
+            logger.warning(f"Invidious {instance} error: {e}")
 
     raise Exception(f"Invidious: todas las instancias fallaron: {last_err}")
 
-# ─── Función principal de descarga (prueba todos los métodos) ─────────────────
+# ─── Coordinador de descarga ──────────────────────────────────────────────────
 def download_youtube_audio_strict(url: str, output_prefix: str = "audio_temp") -> str:
-    """Descarga audio de YouTube probando múltiples métodos en orden."""
-    # Limpiar archivos temporales previos
+    """Descarga audio intentando yt-dlp (InnerTube Android directo) -> Piped -> Invidious"""
     for f in glob.glob(f"{output_prefix}.*"):
         try:
             os.remove(f)
@@ -323,33 +288,27 @@ def download_youtube_audio_strict(url: str, output_prefix: str = "audio_temp") -
     video_id = extract_video_id(url)
     errors = []
 
-    # Método 1: yt-dlp (funciona con cookies válidas o IP residencial)
+    # 1. yt-dlp con player_client=['android'] y player_skip=['webpage','configs']
     try:
-        logger.info("=== Intentando descarga con yt-dlp ===")
         return download_via_ytdlp(url, output_prefix)
     except Exception as e:
         errors.append(f"yt-dlp: {e}")
-        logger.warning(f"yt-dlp falló, probando APIs proxy: {e}")
+        logger.warning(f"yt-dlp falló, probando Piped API: {e}")
 
-    # Método 2: Piped API (proxy público)
+    # 2. Piped API
     try:
-        logger.info("=== Intentando descarga con Piped API ===")
         return download_via_piped(video_id, output_prefix)
     except Exception as e:
         errors.append(f"Piped: {e}")
-        logger.warning(f"Piped API falló, probando Invidious: {e}")
+        logger.warning(f"Piped falló, probando Invidious: {e}")
 
-    # Método 3: Invidious API (proxy alternativo)
+    # 3. Invidious API
     try:
-        logger.info("=== Intentando descarga con Invidious API ===")
         return download_via_invidious(video_id, output_prefix)
     except Exception as e:
         errors.append(f"Invidious: {e}")
-        logger.warning(f"Invidious API falló: {e}")
 
-    # Todos los métodos fallaron
-    error_summary = " | ".join(errors)
-    raise Exception(f"Fallo en descarga de audio (todos los métodos): {error_summary}")
+    raise Exception(f"Fallo en descarga de audio (todos los métodos): {' | '.join(errors)}")
 
 # ─── Rutas API ────────────────────────────────────────────────────────────────
 @app.route('/api/process', methods=['POST'])
@@ -361,18 +320,17 @@ def process():
     try:
         audio_file = download_youtube_audio_strict(url, output_prefix="audio_temp_process")
 
-        # Detección de ritmo real con Librosa (máximo 120s para memoria de Render)
         logger.info(f"Cargando {audio_file} con Librosa para análisis real...")
         y, sr = librosa.load(audio_file, sr=16000, duration=120)
         onset_env = librosa.onset.onset_strength(y=y, sr=sr)
-        peaks = librosa.util.peak_pick(onset_env, pre_max=3, post_max=3, pre_avg=3, post_avg=5, delta=0.5, wait=10)
+        peaks = librosa.util.peak_pick(onset_env, pre_max=3, post_max=3, pre_avg=3, post_avg=5, delta=0.45, wait=8)
         times = librosa.frames_to_time(peaks, sr=sr)
 
         notes = [{'time': float(round(t, 3)), 'lane': int(i % 3)} for i, t in enumerate(times)]
         return jsonify({'status': 'ok', 'notes': notes, 'duration': float(librosa.get_duration(y=y, sr=sr))})
 
     except Exception as e:
-        logger.exception(f"Error en análisis de audio real: {e}")
+        logger.exception(f"Error en /api/process: {e}")
         return jsonify({'error': f"Error en análisis de audio real: {str(e)}"}), 500
 
 @app.route('/api/v1/beatmap/generate', methods=['POST'])
@@ -397,7 +355,6 @@ def generate_beatmap():
         if bpm < 50: bpm = 120.0
         elif bpm > 190: bpm = bpm / 2.0
 
-        # Umbrales según dificultad
         delta_map = {"easy": 0.50, "normal": 0.38, "hard": 0.28, "expert": 0.22}
         delta = delta_map.get(difficulty, 0.38)
 
@@ -517,11 +474,8 @@ def health():
     return jsonify({
         "status": "healthy",
         "service": "Beatstar Beatmap Generator API",
-        "engine": "Flask + Librosa Strict (yt-dlp + Piped + Invidious fallback)",
-        "cookies_loaded": cookie_loaded,
-        "ytdlp_available": HAS_YTDLP,
-        "piped_instances": len(PIPED_INSTANCES),
-        "invidious_instances": len(INVIDIOUS_INSTANCES),
+        "engine": "Flask + Librosa Strict (yt-dlp InnerTube + Proxies)",
+        "cookies_loaded": cookie_loaded
     })
 
 @app.route('/', methods=['GET'])
