@@ -1,0 +1,1992 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Beatstar Web | Community Rhythm Engine</title>
+
+  <!-- PWA & Mobile Web App Meta Tags -->
+  <link rel="manifest" href="/static/manifest.json">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Beatstar">
+  <meta name="theme-color" content="#06040a">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- JSZip CDN for in-memory client-side decompression -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css?v=3.3">
+</head>
+<body>
+
+  <!-- 9:16 Mobile Viewport Frame -->
+  <div class="game-viewport">
+
+    <!-- Toast Notification (Alert / Info) -->
+    <div id="errorToast" class="error-toast">
+      <span id="errorToastIcon">⚠️</span>
+      <p id="errorToastMsg" class="text-xs font-semibold leading-snug flex-1">Aviso</p>
+      <button onclick="hideErrorToast()" class="text-white/80 hover:text-white text-xs font-bold p-1">✕</button>
+    </div>
+
+    <!-- Layer 0: Global Fullscreen Loading Overlay (Pro Vinyl & Equalizer) -->
+    <div id="globalLoadingOverlay" class="global-loading-overlay space-y-4">
+      <div class="relative flex items-center justify-center">
+        <!-- Spinning Vinyl Disc -->
+        <div class="vinyl-disc">
+          <div class="vinyl-center-hole"></div>
+        </div>
+      </div>
+
+      <div class="text-center space-y-1 max-w-[280px]">
+        <div class="flex justify-center mb-1">
+          <div class="eq-container">
+            <div class="eq-bar"></div>
+            <div class="eq-bar"></div>
+            <div class="eq-bar"></div>
+            <div class="eq-bar"></div>
+            <div class="eq-bar"></div>
+          </div>
+        </div>
+        <h2 id="globalLoadTitle" class="text-base font-black text-white truncate">Cargando Canción...</h2>
+        <p id="globalLoadArtist" class="text-xs text-gray-400 truncate">Comunidad Beatstar</p>
+      </div>
+
+      <!-- Shimmer Progress Track -->
+      <div class="loading-progress-track">
+        <div class="loading-progress-bar"></div>
+      </div>
+
+      <div class="text-center space-y-0.5">
+        <p id="globalLoadStatus" class="text-xs font-bold text-pink-400">Descargando paquete de notas...</p>
+        <p class="text-[10px] text-gray-400">Remapeando a 3 carriles fijos (Máx 2 dedos)</p>
+      </div>
+    </div>
+
+    <!-- Layer 1: Ambient Dark Vignette Overlay -->
+    <div class="video-overlay-filter"></div>
+
+    <!-- Layer 2: Solid Pitch Black Calibration Backdrop (Active only during calibration) -->
+    <div id="calibrationBackdrop" class="calibration-backdrop"></div>
+
+    <!-- Layer 3: Blackout Fade Curtain -->
+    <div id="gameCurtain" class="game-blackout-curtain revealed"></div>
+
+    <!-- Layer 4: Start 3-2-1 Full Opaque Countdown Overlay -->
+    <div id="startCountdownOverlay" class="start-countdown-overlay">
+      <div id="startCountdownNumber" class="start-countdown-number">3</div>
+    </div>
+
+    <!-- Layer 5: Stylized Rewind Badge Overlay (⏪ -2.0s) -->
+    <div id="rewindBadgeOverlay" class="rewind-badge-overlay">
+      <div class="rewind-badge">
+        <span class="text-cyan-400 text-lg font-black animate-pulse">⏪</span>
+        <div class="text-left">
+          <span class="text-xs font-black text-white tracking-wider block leading-tight">-2.0s REBOBINANDO</span>
+          <span class="text-[9px] text-cyan-300 font-semibold block leading-none">Cinta analógica</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Layer 6: 120 FPS High Performance Game Canvas (Strictly 3 Lanes) -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Layer 7: Fixed Top HUD Header (Beatstar Style) -->
+    <div id="fixedTopHud" class="fixed-top-hud hidden">
+      <!-- Left: Song Info & Stars -->
+      <div class="flex flex-col">
+        <span id="hudSongTitle" class="text-[11px] font-bold text-gray-200 truncate max-w-[130px]">Cargando...</span>
+        <div class="star-meter mt-0.5" id="starMeter">
+          <svg class="star-icon" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+          <svg class="star-icon" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+          <svg class="star-icon" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+          <svg class="star-icon" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+          <svg class="star-icon" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+        </div>
+      </div>
+
+      <!-- Center: Dynamic Score & Combo Badge with Multiplier -->
+      <div class="text-center">
+        <div id="hudScore" class="text-base font-black text-white code-font leading-tight">0</div>
+        <div class="flex items-center justify-center gap-1 mt-0.5">
+          <span id="hudCombo" class="text-[10px] font-black text-pink-400 tracking-wider">COMBO 0</span>
+          <span id="hudMultiplier" class="multiplier-badge">1x</span>
+        </div>
+      </div>
+
+      <!-- Right: Clefs In-Game + Pause -->
+      <div class="flex items-center gap-1.5">
+        <div class="clef-badge py-1 px-2">
+          <span class="text-amber-400 font-bold text-xs">𝄞</span>
+          <span id="hudClefCount" class="text-[11px] font-black text-amber-300 font-mono">10,000</span>
+        </div>
+        <button id="btnPauseGame" class="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 flex items-center justify-center text-white transition cursor-pointer" title="Pausar Partida">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Layer 8: Main Menu Screen (Unified Search, Library, Playlists, FX Shop) -->
+    <div id="searchScreen" class="search-screen space-y-3">
+      
+      <!-- Top Header: Brand + Clefs + FX Shop + Settings -->
+      <div class="flex items-center justify-between pt-1">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-pink-500 to-purple-600 flex items-center justify-center shadow-lg shadow-pink-500/30">
+            <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+          </div>
+          <div>
+            <h1 class="text-base font-black text-white tracking-tight leading-tight">BEATSTAR <span class="text-pink-500 text-xs font-bold">COMMUNITY</span></h1>
+            <p class="text-[9px] text-gray-400 leading-none">osu! Mania • Quaver • Clone Hero (3K)</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1.5">
+          <!-- FX Shop Button 🎨 -->
+          <button id="btnOpenFXShop" onclick="openFXShopModal()" class="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-600/30 to-pink-600/30 border border-pink-500/30 hover:border-pink-500/60 active:scale-95 text-white flex items-center gap-1 transition cursor-pointer text-xs font-bold shadow-md shadow-pink-500/15" title="Tienda de Efectos y Fondos">
+            <span>🎨</span> <span class="text-[10px]">Efectos</span>
+          </button>
+
+          <!-- Clef Counter (𝄞) -->
+          <div class="clef-badge" title="Saldo de Claves de Sol">
+            <span class="text-amber-400 font-bold text-sm leading-none">𝄞</span>
+            <span id="mainClefCount" class="text-xs font-black text-amber-300 font-mono">10,000</span>
+          </div>
+
+          <!-- Settings Gear Button ⚙️ -->
+          <button id="btnOpenSettings" class="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white flex items-center justify-center transition cursor-pointer text-sm" title="Ajustes">
+            ⚙️
+          </button>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <div class="nav-tabs">
+        <div id="tabSearchBtn" onclick="switchMainTab('search')" class="nav-tab active">
+          🔍 Explorar Mapas
+        </div>
+        <div id="tabLibraryBtn" onclick="switchMainTab('library')" class="nav-tab">
+          📦 Mi Biblioteca
+        </div>
+      </div>
+
+      <!-- TAB 1: Search View -->
+      <div id="tabSearchSection" class="space-y-2.5">
+        <!-- Search Box -->
+        <div class="relative">
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1">
+              <input 
+                id="searchInput" 
+                type="text" 
+                placeholder="Buscar canción o artista (ej. Galaxy, Camellia, Despacito)..." 
+                value="Galaxy"
+                onkeydown="if(event.key==='Enter') executeSearch()"
+                class="w-full pl-8 pr-3 py-2.5 bg-black/60 border border-white/15 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-pink-500 transition"
+              >
+              <svg class="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            </div>
+            <button 
+              id="btnSearch" 
+              onclick="executeSearch()" 
+              class="px-4 py-2.5 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 font-bold rounded-xl text-xs text-white shadow-lg shadow-pink-500/25 transition active:scale-95 flex items-center gap-1 cursor-pointer"
+            >
+              <span id="searchBtnText">Buscar</span>
+              <svg id="searchSpinner" class="hidden animate-spin w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter Badges / Info -->
+        <div class="flex items-center justify-between px-1 py-0.5 text-[10px] text-gray-400">
+          <div class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-pink-500"></span> <span class="text-pink-300">osu!</span>
+            <span class="w-2 h-2 rounded-full bg-cyan-400 ml-1"></span> <span class="text-cyan-300">Quaver</span>
+            <span class="w-2 h-2 rounded-full bg-purple-500 ml-1"></span> <span class="text-purple-300">Clone Hero</span>
+          </div>
+          <span class="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 font-bold text-gray-300">
+            3K • Máx 2 Dedos
+          </span>
+        </div>
+
+        <!-- Results Container -->
+        <div id="resultsList" class="space-y-2.5 flex-1 pb-6">
+          <!-- Results injected dynamically -->
+        </div>
+      </div>
+
+      <!-- TAB 2: Library Section (With Sub-Tabs: Descargas, Favoritos, Mis Playlists) -->
+      <div id="tabLibrarySection" class="hidden space-y-3 pb-6">
+        
+        <!-- Library Sub-Navigation Tabs -->
+        <div class="subnav-tabs">
+          <div id="subtabDownloadsBtn" onclick="switchLibrarySubtab('downloads')" class="subnav-tab active">
+            📥 Descargas
+          </div>
+          <div id="subtabFavoritesBtn" onclick="switchLibrarySubtab('favorites')" class="subnav-tab">
+            ❤️ Favoritos
+          </div>
+          <div id="subtabPlaylistsBtn" onclick="switchLibrarySubtab('playlists')" class="subnav-tab">
+            📁 Mis Playlists
+          </div>
+        </div>
+
+        <!-- Subtab 1: Downloads Container -->
+        <div id="subtabDownloadsContainer" class="space-y-2.5">
+          <div class="flex items-center justify-between bg-white/5 p-2 rounded-xl border border-white/10">
+            <div>
+              <p class="text-xs font-bold text-white flex items-center gap-1">
+                <span>📦</span> Canciones Descargadas
+              </p>
+              <p class="text-[9px] text-gray-400">Listas para jugar sin conexión a internet</p>
+            </div>
+            <button onclick="playRandomLibraryTrack()" class="px-3 py-1 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 text-white rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer transition active:scale-95 shadow-md shadow-cyan-500/20" title="Reproducción aleatoria">
+              <span>🔀</span> Aleatorio
+            </button>
+          </div>
+          <div id="libraryTracksList" class="space-y-2.5">
+            <!-- Injected dynamically from IndexedDB -->
+          </div>
+        </div>
+
+        <!-- Subtab 2: Favorites Container -->
+        <div id="subtabFavoritesContainer" class="hidden space-y-2.5">
+          <div class="flex items-center justify-between bg-white/5 p-2 rounded-xl border border-white/10">
+            <div>
+              <p class="text-xs font-bold text-white flex items-center gap-1">
+                <span>❤️</span> Mis Canciones Favoritas
+              </p>
+              <p class="text-[9px] text-gray-400">Tus pistas marcadas con corazón</p>
+            </div>
+          </div>
+          <div id="favoritesTracksList" class="space-y-2.5">
+            <!-- Injected dynamically -->
+          </div>
+        </div>
+
+        <!-- Subtab 3: Playlists Container -->
+        <div id="subtabPlaylistsContainer" class="hidden space-y-2.5">
+          <div class="flex items-center justify-between bg-white/5 p-2 rounded-xl border border-white/10">
+            <div>
+              <p class="text-xs font-bold text-white flex items-center gap-1">
+                <span>📁</span> Playlists Guardadas
+              </p>
+              <p class="text-[9px] text-gray-400">Importadas de YouTube o creadas localmente</p>
+            </div>
+            <button onclick="openYTMusicModal()" class="px-2.5 py-1 bg-red-600/80 hover:bg-red-600 text-white rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer transition active:scale-95">
+              <span>🔗</span> + Importar
+            </button>
+          </div>
+          
+          <div id="playlistsList" class="space-y-2.5">
+            <!-- Playlists injected dynamically -->
+          </div>
+
+          <!-- Inside Playlist View (Tracks of selected playlist) -->
+          <div id="selectedPlaylistView" class="hidden space-y-2.5 pt-2 border-t border-white/10">
+            <div class="flex items-center justify-between">
+              <button onclick="closePlaylistDetailView()" class="text-xs font-bold text-cyan-400 flex items-center gap-1 hover:underline cursor-pointer">
+                <span>←</span> Volver a Playlists
+              </button>
+              <span id="selectedPlaylistTitle" class="text-xs font-black text-white truncate max-w-[180px]">Playlist</span>
+            </div>
+            <div id="playlistTracksContainer" class="space-y-2">
+              <!-- Tracks of playlist injected dynamically -->
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- Layer 9: Settings Panel Modal (⚙️) -->
+    <div id="settingsModal" class="settings-modal space-y-3.5">
+      <div class="glass-card w-full max-w-[320px] p-4 rounded-2xl space-y-3.5">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-bold text-white flex items-center gap-1.5">
+            <span>⚙️</span> Ajustes del Motor
+          </h3>
+          <button id="btnCloseSettings" class="text-gray-400 hover:text-white text-xs p-1 cursor-pointer">✕</button>
+        </div>
+
+        <!-- 1. Velocidad de Caída de Notas -->
+        <div class="p-2.5 bg-black/40 border border-white/10 rounded-xl space-y-1.5">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-bold text-white">Velocidad de Notas:</span>
+            <span id="settingsNoteSpeedVal" class="font-mono font-bold text-pink-400">1.0x</span>
+          </div>
+          <select id="settingsNoteSpeedSelect" onchange="updateNoteSpeed(this.value)" class="w-full bg-black/70 border border-white/15 rounded-lg text-xs text-white p-1.5 cursor-pointer">
+            <option value="0.8">0.8x (Lento / Relajado)</option>
+            <option value="1.0" selected>1.0x (Auto por Dificultad - Recomendado)</option>
+            <option value="1.2">1.2x (Rápido / Espaciado)</option>
+            <option value="1.4">1.4x (Muy Rápido)</option>
+            <option value="1.8">1.8x (Extremo / Pro)</option>
+          </select>
+        </div>
+
+        <!-- 2. 'Modo Continuar' Toggle Switch -->
+        <div class="flex items-center justify-between p-2.5 bg-black/40 border border-white/10 rounded-xl">
+          <div class="pr-2">
+            <p class="text-xs font-bold text-white">Modo Continuar</p>
+            <p class="text-[9px] text-gray-400 leading-tight">No fallar ni pausar partida al errar notas</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input id="continueModeSwitch" type="checkbox" onchange="toggleContinueMode(this.checked)" class="sr-only peer">
+            <div class="w-9 h-5 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-pink-500"></div>
+          </label>
+        </div>
+
+        <!-- 3. Open FX Shop Button -->
+        <button onclick="closeSettingsModal(); openFXShopModal();" class="w-full py-2.5 bg-gradient-to-r from-purple-600/30 to-pink-600/30 border border-pink-500/40 text-pink-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer hover:bg-pink-500/20">
+          <span>🎨</span> Tienda de Fondos y Efectos
+        </button>
+
+        <!-- 4. Calibration Action Button -->
+        <button id="btnSettingsOpenCalib" class="w-full py-2.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+          Calibración de Latencia (Audio & Visual)
+        </button>
+
+        <!-- 5. Import YouTube Playlist Button -->
+        <button id="btnSettingsOpenImport" class="w-full py-2.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer">
+          <span>🔗</span> Importar Playlist de YouTube
+        </button>
+      </div>
+    </div>
+
+    <!-- Layer 10: Modal Tienda de Efectos y Fondos (🎨) -->
+    <div id="fxShopModal" class="modal-overlay">
+      <div class="glass-card w-full max-w-[340px] p-4 rounded-2xl space-y-3.5 max-h-[90vh] flex flex-col">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-bold text-white flex items-center gap-1.5">
+            <span>🎨</span> Tienda de Fondos y Efectos
+          </h3>
+          <div class="flex items-center gap-2">
+            <div class="clef-badge py-0.5 px-2">
+              <span class="text-amber-400 font-bold text-xs">𝄞</span>
+              <span id="shopClefsDisplay" class="text-[11px] font-black text-amber-300 font-mono">10,000</span>
+            </div>
+            <button onclick="closeFXShopModal()" class="text-gray-400 hover:text-white text-xs p-1 cursor-pointer">✕</button>
+          </div>
+        </div>
+
+        <p class="text-[10px] text-gray-400 leading-tight">
+          Personaliza la estética visual del juego con auras rítmicas, olas marinas fluidas y visuales retro.
+        </p>
+
+        <!-- Effects List -->
+        <div id="fxShopCardsContainer" class="space-y-2.5 overflow-y-auto flex-1 pr-1">
+          <!-- Injected dynamically -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Layer 11: Modal Añadir Canción a Playlist -->
+    <div id="addToPlaylistModal" class="modal-overlay">
+      <div class="glass-card w-full max-w-[320px] p-4 rounded-2xl space-y-3.5">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-bold text-white flex items-center gap-1.5">
+            <span>➕</span> Añadir a Playlist
+          </h3>
+          <button onclick="closeAddToPlaylistModal()" class="text-gray-400 hover:text-white text-xs p-1 cursor-pointer">✕</button>
+        </div>
+
+        <p id="addToPlaylistSongTitle" class="text-xs font-semibold text-cyan-300 truncate">Título Canción</p>
+
+        <!-- Existing Playlists List -->
+        <div class="space-y-1.5 max-h-[160px] overflow-y-auto" id="availablePlaylistsList">
+          <!-- Injected dynamically -->
+        </div>
+
+        <!-- Create New Playlist on the Fly -->
+        <div class="pt-2 border-t border-white/10 space-y-1.5">
+          <label class="text-[10px] font-bold text-gray-300 block">O crea una nueva playlist:</label>
+          <div class="flex gap-1.5">
+            <input 
+              id="newPlaylistNameInput" 
+              type="text" 
+              placeholder="Nombre de playlist..." 
+              class="flex-1 px-2.5 py-1.5 bg-black/60 border border-white/15 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-pink-500"
+              onkeydown="if(event.key==='Enter') createPlaylistAndAddCurrentSong()"
+            >
+            <button onclick="createPlaylistAndAddCurrentSong()" class="px-3 py-1.5 bg-gradient-to-r from-pink-500 to-purple-600 font-bold rounded-xl text-xs text-white cursor-pointer transition active:scale-95">
+              Crear
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Layer 12: Arcade Revive Penalty Modal ($2^n$ 𝄞) -->
+    <div id="reviveModal" class="revive-modal space-y-4">
+      <div class="text-center space-y-1">
+        <div class="w-12 h-12 mx-auto rounded-2xl bg-red-500/20 border border-red-500/40 flex items-center justify-center text-red-400 mb-1 shadow-lg shadow-red-500/30 animate-pulse">
+          <span class="text-2xl font-black">✕</span>
+        </div>
+        <h2 class="text-lg font-black text-white tracking-wider">¡NOTA FALLADA!</h2>
+        <p class="text-xs text-gray-400 font-medium">Paga la penalización en Claves de Sol para continuar:</p>
+      </div>
+
+      <!-- Cost Display -->
+      <div class="p-3 bg-black/60 border border-amber-500/40 rounded-2xl flex items-center justify-center gap-2">
+        <span class="text-2xl text-amber-400 font-bold leading-none">𝄞</span>
+        <span id="reviveCostVal" class="text-3xl font-black text-amber-300 font-mono">1</span>
+        <span class="text-xs text-gray-400 font-semibold self-end pb-1">Claves de Sol</span>
+      </div>
+
+      <div class="space-y-2 w-full max-w-[260px]">
+        <!-- Pay and Resume -->
+        <button type="button" onclick="payReviveAndResume(event)" id="btnPayRevive" class="w-full py-3 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 font-black rounded-xl text-xs text-black shadow-lg shadow-amber-500/30 transition transform active:scale-95 flex items-center justify-center gap-2 cursor-pointer">
+          CONTINUAR (Pagar <span id="btnPayReviveCost">1</span> 𝄞)
+        </button>
+
+        <!-- Exit -->
+        <button onclick="exitToSearch()" class="w-full py-2.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 font-bold rounded-xl text-xs transition border border-red-500/30 cursor-pointer">
+          Salir al Menú
+        </button>
+
+        <!-- Restart -->
+        <button onclick="restartFromPenalty()" class="w-full py-2 bg-white/10 hover:bg-white/20 font-bold rounded-xl text-xs text-gray-300 transition cursor-pointer border border-white/10">
+          Reiniciar Canción
+        </button>
+      </div>
+    </div>
+
+    <!-- Layer 13: Visual Calibration Screen Overlay -->
+    <div id="calibrationScreen" class="calibration-screen">
+      <div class="interactive glass-card p-3 rounded-2xl flex items-center justify-between">
+        <div>
+          <h2 class="text-xs font-bold text-white flex items-center gap-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse"></span>
+            Calibración de Audio y Offset
+          </h2>
+          <p class="text-[10px] text-gray-400">Pulso de metrónomo cada 2 segundos</p>
+        </div>
+        <button id="btnExitCalib" class="px-3.5 py-1.5 bg-gradient-to-r from-pink-500 to-purple-600 rounded-xl text-xs font-bold text-white shadow-lg shadow-pink-500/30 active:scale-95 transition cursor-pointer">
+          Guardar y Salir
+        </button>
+      </div>
+
+      <div class="text-center space-y-2 my-auto interactive">
+        <div id="metronomeIndicator" class="metronome-pulse flex items-center justify-center">
+          <svg class="w-5 h-5 text-cyan-300" fill="currentColor" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+        </div>
+        <p class="text-[11px] font-semibold text-gray-300">Ajusta el desfase hasta sincronizar sonido, vista y toque en la línea blanca</p>
+      </div>
+
+      <div class="interactive bottom-offset-card space-y-1.5">
+        <div class="flex items-center justify-between text-[11px]">
+          <span class="text-gray-300 font-semibold">Offset Latencia Audio:</span>
+          <div class="flex items-center gap-1.5">
+            <button onclick="nudgeOffset(-25)" class="px-2 py-0.5 bg-white/10 hover:bg-white/20 rounded font-mono font-bold text-[10px]">-25ms</button>
+            <span id="calibOffsetVal" class="font-mono font-bold text-cyan-400 text-xs w-16 text-center">0 ms</span>
+            <button onclick="nudgeOffset(25)" class="px-2 py-0.5 bg-white/10 hover:bg-white/20 rounded font-mono font-bold text-[10px]">+25ms</button>
+          </div>
+        </div>
+        <input 
+          id="calibOffsetSlider" 
+          type="range" 
+          min="-1000" 
+          max="1000" 
+          step="10" 
+          value="0" 
+          class="w-full h-1.5 accent-cyan-400 bg-white/20 rounded-lg cursor-pointer" 
+          oninput="updateOffset(this.value)"
+        >
+        <div class="flex justify-between text-[9px] text-gray-400 font-mono leading-none pt-0.5">
+          <span>-1000ms</span>
+          <span>0ms</span>
+          <span>+1000ms</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Layer 14: YouTube Playlist Importer Modal -->
+    <div id="ytMusicModal" class="modal-overlay">
+      <div class="glass-card w-full max-w-[340px] p-4 rounded-2xl space-y-3.5">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-bold text-white flex items-center gap-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-red-500"></span>
+            Importar Playlist de YouTube
+          </h3>
+          <button id="btnCloseYTMModal" class="text-gray-400 hover:text-white text-xs p-1 cursor-pointer">✕</button>
+        </div>
+
+        <div class="space-y-1.5">
+          <label class="text-[10px] font-bold text-gray-300 block">Pega la URL o ID de la playlist de YouTube:</label>
+          <div class="flex gap-1.5">
+            <input 
+              id="directPlaylistUrlInput" 
+              type="text" 
+              placeholder="https://www.youtube.com/playlist?list=..." 
+              class="flex-1 px-2.5 py-1.5 bg-black/60 border border-white/15 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-red-400"
+              onkeydown="if(event.key==='Enter') importDirectPlaylistUrl()"
+            >
+            <button onclick="importDirectPlaylistUrl()" id="btnImportDirectUrl" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 font-bold rounded-xl text-xs text-white cursor-pointer transition active:scale-95 flex items-center gap-1">
+              <span>Importar</span>
+            </button>
+          </div>
+        </div>
+
+        <p class="text-[10px] text-gray-400 leading-tight">
+          La playlist se guardará en tu pestaña <b>Mis Playlists</b> con todas sus canciones listadas para jugar y buscar beatmaps comunitarios al instante.
+        </p>
+      </div>
+    </div>
+
+    <!-- Layer 15: Floating Pause Menu Modal -->
+    <div id="pauseModal" class="pause-modal space-y-4">
+      <div class="text-center space-y-1">
+        <div class="w-12 h-12 mx-auto rounded-2xl bg-white/10 flex items-center justify-center text-white mb-1 shadow-lg">
+          <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        </div>
+        <h2 class="text-lg font-black text-white tracking-wider">JUEGO EN PAUSA</h2>
+        <p id="pauseSongTitle" class="text-xs text-gray-300 font-medium truncate max-w-[260px]">Título de canción</p>
+      </div>
+
+      <div class="w-full max-w-[270px] bg-black/50 border border-white/10 p-3 rounded-xl space-y-2">
+        <div class="flex items-center justify-between text-xs">
+          <span class="text-gray-300 font-semibold">Ajustar Offset Audio:</span>
+          <div class="flex items-center gap-1">
+            <button onclick="nudgeOffset(-25)" class="px-1.5 py-0.5 bg-white/10 hover:bg-white/20 rounded font-mono font-bold text-[9px]">-25ms</button>
+            <span id="pauseOffsetVal" class="font-mono font-bold text-cyan-400 text-xs min-w-[50px] text-center">0 ms</span>
+            <button onclick="nudgeOffset(25)" class="px-1.5 py-0.5 bg-white/10 hover:bg-white/20 rounded font-mono font-bold text-[9px]">+25ms</button>
+          </div>
+        </div>
+        <input 
+          id="pauseOffsetSlider" 
+          type="range" 
+          min="-1000" 
+          max="1000" 
+          step="10" 
+          value="0" 
+          class="w-full h-1.5 accent-cyan-400 bg-white/20 rounded-lg cursor-pointer" 
+          oninput="updateOffset(this.value)"
+        >
+      </div>
+
+      <div class="space-y-2.5 w-full max-w-[270px]">
+        <button id="btnResumeGame" class="w-full py-3 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 font-bold rounded-xl text-xs text-white shadow-lg shadow-pink-500/30 transition transform active:scale-95 flex items-center justify-center gap-2 cursor-pointer">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          REANUDAR
+        </button>
+
+        <button id="btnRestartGame" class="w-full py-3 bg-white/10 hover:bg-white/20 font-bold rounded-xl text-xs text-white transition active:scale-95 flex items-center justify-center gap-2 cursor-pointer border border-white/10">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+          REINICIAR
+        </button>
+
+        <button id="btnExitGame" class="w-full py-3 bg-red-500/20 hover:bg-red-500/30 text-red-300 font-bold rounded-xl text-xs transition active:scale-95 border border-red-500/30 flex items-center justify-center gap-2 cursor-pointer">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+          SALIR AL MENÚ
+        </button>
+      </div>
+    </div>
+
+    <!-- Layer 16: Results Screen Modal with Highscores -->
+    <div id="resultsModal" class="results-modal space-y-4">
+      <div class="text-center space-y-1">
+        <div id="resBadgeStatus" class="inline-block px-3 py-0.5 rounded-full bg-pink-500/20 text-pink-400 text-xs font-black tracking-wider uppercase">
+          ¡Pista Completada!
+        </div>
+        <h2 id="resSongTitle" class="text-sm font-black text-white truncate max-w-[260px]">Título de Canción</h2>
+        <p id="resDiffName" class="text-[11px] text-cyan-300 font-semibold">Normal 3.0★</p>
+      </div>
+
+      <div class="flex justify-center gap-1 text-2xl" id="resStars">
+        ★ ★ ★ ★ ★
+      </div>
+
+      <div class="glass-card w-full p-4 rounded-2xl text-center space-y-2.5">
+        <div>
+          <p class="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Puntuación Final</p>
+          <p id="resFinalScore" class="text-3xl font-black text-white code-font mt-0.5">0</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 text-left pt-2 border-t border-white/5">
+          <div class="bg-black/30 p-2 rounded-lg">
+            <span class="text-[10px] text-gray-400">Máximo Combo</span>
+            <p id="resMaxCombo" class="text-base font-black text-pink-400">0</p>
+          </div>
+          <div class="bg-black/30 p-2 rounded-lg">
+            <span class="text-[10px] text-gray-400">Recompensa</span>
+            <p class="text-base font-black text-amber-400 font-mono">+<span id="resEarnedClefs">0</span> 𝄞</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-4 gap-1 text-[10px] font-semibold pt-1">
+          <div class="text-cyan-300">P+ <span id="resPPlus" class="block text-white font-bold">0</span></div>
+          <div class="text-emerald-400">P <span id="resP" class="block text-white font-bold">0</span></div>
+          <div class="text-amber-400">G <span id="resG" class="block text-white font-bold">0</span></div>
+          <div class="text-red-400">M <span id="resM" class="block text-white font-bold">0</span></div>
+        </div>
+      </div>
+
+      <div class="flex gap-2 w-full">
+        <button onclick="restartCurrentSong()" class="flex-1 py-2.5 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-bold text-white transition cursor-pointer">
+          Reintentar
+        </button>
+        <button onclick="exitToSearch()" class="flex-1 py-2.5 bg-gradient-to-r from-pink-500 to-purple-600 rounded-xl text-xs font-bold text-white shadow-lg shadow-pink-500/30 transition cursor-pointer">
+          Explorar Más
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/static/parsers.js?v=3.3"></script>
+  <script src="/static/game.js?v=3.3"></script>
+  <script>
+    let engine = null;
+    let currentActiveBeatmap = null;
+    let currentActiveChartItem = null;
+    let currentActiveAudioBlob = null;
+    let toastTimeout = null;
+    let currentActiveTab = 'search';
+    let currentLibrarySubtab = 'downloads';
+    let highscores = {};
+    let searchResultsCache = [];
+    let activeCountdownInterval = null;
+    let songPendingAddToPlaylist = null;
+    let favoriteIdsSet = new Set();
+
+    // FX Theme Catalog
+    const FX_THEMES = [
+      {
+        id: 'neon_aura',
+        name: 'Aura Neón Rítmica',
+        desc: 'Fondo negro con auras radiales palpitando al ritmo de la música y ondas sutiles al golpear.',
+        price: 0,
+        previewClass: 'preview-neon-aura'
+      },
+      {
+        id: 'ocean_waves',
+        name: 'Mareas del Océano',
+        desc: 'Gradiente marino profundo con olas vivas en movimiento y oleaje luminoso al pulsar cada tecla.',
+        price: 600,
+        previewClass: 'preview-ocean-waves'
+      },
+      {
+        id: 'synthwave_grid',
+        name: 'Ciberespacio Retro 80s',
+        desc: 'Rejilla synthwave en perspectiva con sol neón en el horizonte y ráfagas de velocidad.',
+        price: 1200,
+        previewClass: 'preview-synthwave'
+      },
+      {
+        id: 'cosmic_aurora',
+        name: 'Aurora Boreal Cósmica',
+        desc: 'Cortinas de plasma esmeralda y violeta ondulando suavemente en el cosmos.',
+        price: 1800,
+        previewClass: 'preview-aurora'
+      },
+      {
+        id: 'black',
+        name: 'Negro Puro / Minimal',
+        desc: 'Fondo negro sólido sin efectos visuales para máxima concentración y rendimiento.',
+        price: 0,
+        previewClass: 'preview-black'
+      }
+    ];
+
+    let unlockedEffects = JSON.parse(localStorage.getItem('beatstar_unlocked_effects') || '["neon_aura", "black"]');
+    let activeEffectId = localStorage.getItem('beatstar_active_effect') || 'neon_aura';
+
+    // Claves de Sol (𝄞) Currency State
+    let userClefs = parseInt(localStorage.getItem('beatstar_clefs') || '10000', 10);
+    if (isNaN(userClefs) || userClefs < 10000) {
+      userClefs = 10000;
+      localStorage.setItem('beatstar_clefs', '10000');
+    }
+
+    let currentPenaltyCost = 1;
+
+    function updateUserClefsDisplay() {
+      const mainEl = document.getElementById('mainClefCount');
+      const hudEl = document.getElementById('hudClefCount');
+      const shopEl = document.getElementById('shopClefsDisplay');
+      if (mainEl) mainEl.innerText = userClefs.toLocaleString();
+      if (hudEl) hudEl.innerText = userClefs.toLocaleString();
+      if (shopEl) shopEl.innerText = userClefs.toLocaleString();
+      localStorage.setItem('beatstar_clefs', userClefs.toString());
+    }
+
+    function addClefs(amount) {
+      userClefs += amount;
+      updateUserClefsDisplay();
+    }
+
+    function deductClefs(amount) {
+      if (userClefs < amount) return false;
+      userClefs -= amount;
+      updateUserClefsDisplay();
+      return true;
+    }
+
+    function loadHighscores() {
+      try {
+        highscores = JSON.parse(localStorage.getItem('beatstar_highscores') || '{}');
+      } catch (e) {
+        highscores = {};
+      }
+    }
+
+    async function loadFavoritesSet() {
+      try {
+        const favs = await IndexedDBStorage.getAllFavorites();
+        favoriteIdsSet = new Set(favs.map(f => f.id));
+      } catch (e) {
+        favoriteIdsSet = new Set();
+      }
+    }
+
+    function saveHighscore(songId, score, stars, maxCombo) {
+      const current = highscores[songId];
+      let isNewRecord = false;
+      if (!current || score > current.score) {
+        highscores[songId] = { score, stars, maxCombo };
+        localStorage.setItem('beatstar_highscores', JSON.stringify(highscores));
+        isNewRecord = true;
+      }
+      return isNewRecord;
+    }
+
+    // Modal Control Functions
+    window.openSettingsModal = function() {
+      const modal = document.getElementById('settingsModal');
+      if (modal) {
+        modal.style.display = 'flex';
+        modal.classList.add('open');
+      }
+    };
+
+    window.closeSettingsModal = function() {
+      const modal = document.getElementById('settingsModal');
+      if (modal) {
+        modal.classList.remove('open');
+        modal.style.display = 'none';
+      }
+    };
+
+    window.openFXShopModal = function() {
+      updateUserClefsDisplay();
+      renderFXShopItems();
+      const modal = document.getElementById('fxShopModal');
+      if (modal) {
+        modal.style.display = 'flex';
+        modal.classList.add('open');
+      }
+    };
+
+    window.closeFXShopModal = function() {
+      const modal = document.getElementById('fxShopModal');
+      if (modal) {
+        modal.classList.remove('open');
+        modal.style.display = 'none';
+      }
+    };
+
+    function renderFXShopItems() {
+      const container = document.getElementById('fxShopCardsContainer');
+      if (!container) return;
+
+      container.innerHTML = FX_THEMES.map(theme => {
+        const isUnlocked = unlockedEffects.includes(theme.id);
+        const isActive = activeEffectId === theme.id;
+
+        let actionBtnHtml = '';
+        if (isActive) {
+          actionBtnHtml = `
+            <button disabled class="px-3 py-1.5 rounded-xl bg-cyan-500/20 text-cyan-300 font-bold text-xs border border-cyan-500/40 opacity-90 cursor-default flex items-center gap-1">
+              <span>✓</span> Equipado
+            </button>
+          `;
+        } else if (isUnlocked) {
+          actionBtnHtml = `
+            <button onclick="equipFXTheme('${theme.id}')" class="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 text-white font-bold text-xs transition active:scale-95 cursor-pointer shadow-md shadow-cyan-500/20">
+              Equipar
+            </button>
+          `;
+        } else {
+          actionBtnHtml = `
+            <button onclick="buyFXTheme('${theme.id}', ${theme.price})" class="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 text-black font-black text-xs transition active:scale-95 cursor-pointer shadow-md shadow-amber-500/30 flex items-center gap-1">
+              <span>Comprar (${theme.price} 𝄞)</span>
+            </button>
+          `;
+        }
+
+        return `
+          <div class="fx-shop-card ${isActive ? 'active-theme' : ''}">
+            <div class="fx-preview-box ${theme.previewClass}">
+              ${isActive ? '<span class="px-2 py-0.5 rounded-full bg-black/60 text-cyan-300 text-[10px] font-black border border-cyan-400/40">ACTIVO</span>' : ''}
+            </div>
+            <div class="flex items-center justify-between pt-1">
+              <div>
+                <p class="text-xs font-black text-white">${theme.name}</p>
+                <p class="text-[9px] text-gray-400 leading-tight max-w-[200px]">${theme.desc}</p>
+              </div>
+              <div class="flex-shrink-0">
+                ${actionBtnHtml}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    window.equipFXTheme = function(themeId) {
+      activeEffectId = themeId;
+      localStorage.setItem('beatstar_active_effect', themeId);
+      if (engine) engine.setActiveEffect(themeId);
+      showSuccessToast('Efecto visual equipado.');
+      renderFXShopItems();
+    };
+
+    window.buyFXTheme = function(themeId, price) {
+      if (userClefs < price) {
+        showErrorToast(`Necesitas ${price.toLocaleString()} Claves de Sol (𝄞) para comprar este efecto.`);
+        return;
+      }
+      if (deductClefs(price)) {
+        unlockedEffects.push(themeId);
+        localStorage.setItem('beatstar_unlocked_effects', JSON.stringify(unlockedEffects));
+        equipFXTheme(themeId);
+        showSuccessToast(`¡Efecto desbloqueado y equipado! (-${price} 𝄞)`);
+      }
+    };
+
+    window.toggleContinueMode = function(checked) {
+      if (engine) engine.setContinueMode(checked);
+      showSuccessToast(`Modo Continuar ${checked ? 'activado' : 'desactivado'}.`);
+    };
+
+    window.updateNoteSpeed = function(val) {
+      const mult = parseFloat(val) || 1.0;
+      if (engine) engine.setNoteSpeedMultiplier(mult);
+      const valEl = document.getElementById('settingsNoteSpeedVal');
+      if (valEl) valEl.innerText = `${mult}x`;
+      showSuccessToast(`Velocidad de notas: ${mult}x`);
+    };
+
+    window.openNativeCalibration = function() {
+      closeSettingsModal();
+      document.getElementById('searchScreen').classList.add('hidden');
+      document.getElementById('fixedTopHud').classList.add('hidden');
+      
+      const calibBackdrop = document.getElementById('calibrationBackdrop');
+      if (calibBackdrop) {
+        calibBackdrop.classList.add('active');
+        calibBackdrop.style.display = 'block';
+      }
+      
+      const calibScreen = document.getElementById('calibrationScreen');
+      if (calibScreen) {
+        calibScreen.classList.add('open');
+        calibScreen.style.display = 'flex';
+      }
+
+      if (engine) engine.startNativeCalibration();
+    };
+
+    window.saveAndExitCalibration = function() {
+      if (engine) engine.stopNativeCalibration();
+      
+      const calibBackdrop = document.getElementById('calibrationBackdrop');
+      if (calibBackdrop) {
+        calibBackdrop.classList.remove('active');
+        calibBackdrop.style.display = 'none';
+      }
+      
+      const calibScreen = document.getElementById('calibrationScreen');
+      if (calibScreen) {
+        calibScreen.classList.remove('open');
+        calibScreen.style.display = 'none';
+      }
+      
+      const searchScreen = document.getElementById('searchScreen');
+      if (searchScreen) {
+        searchScreen.classList.remove('hidden');
+        searchScreen.style.display = 'flex';
+      }
+      showSuccessToast('Offset de latencia guardado.');
+    };
+
+    window.openYTMusicModal = function() {
+      closeSettingsModal();
+      const modal = document.getElementById('ytMusicModal');
+      if (modal) {
+        modal.style.display = 'flex';
+        modal.classList.add('open');
+      }
+    };
+
+    window.closeYTMusicModal = function() {
+      const modal = document.getElementById('ytMusicModal');
+      if (modal) {
+        modal.classList.remove('open');
+        modal.style.display = 'none';
+      }
+    };
+
+    window.openPauseModal = function() {
+      if (!currentActiveBeatmap) return;
+      if (engine) engine.pause();
+
+      const pauseSongTitle = document.getElementById('pauseSongTitle');
+      if (pauseSongTitle && currentActiveBeatmap.metadata) {
+        pauseSongTitle.innerText = currentActiveBeatmap.metadata.title || 'Canción en Pausa';
+      }
+
+      const modal = document.getElementById('pauseModal');
+      if (modal) {
+        modal.style.display = 'flex';
+        modal.classList.add('open');
+      }
+    };
+
+    window.resumeGame = function() {
+      const modal = document.getElementById('pauseModal');
+      if (modal) {
+        modal.classList.remove('open');
+        modal.style.display = 'none';
+      }
+      if (engine) engine.resume();
+    };
+
+    window.restartGame = function() {
+      const modal = document.getElementById('pauseModal');
+      if (modal) {
+        modal.classList.remove('open');
+        modal.style.display = 'none';
+      }
+      if (engine) engine.restart();
+    };
+
+    window.restartFromPenalty = function() {
+      const reviveModal = document.getElementById('reviveModal');
+      if (reviveModal) {
+        reviveModal.classList.remove('open');
+        reviveModal.style.display = 'none';
+      }
+      if (engine) engine.restart();
+    };
+
+    window.payReviveAndResume = function(event) {
+      if (event) {
+        if (typeof event.preventDefault === 'function') event.preventDefault();
+        if (typeof event.stopPropagation === 'function') event.stopPropagation();
+      }
+      if (deductClefs(currentPenaltyCost)) {
+        const reviveModal = document.getElementById('reviveModal');
+        if (reviveModal) {
+          reviveModal.classList.remove('open');
+          reviveModal.style.display = 'none';
+        }
+        showSuccessToast(`¡Reanudando! (-${currentPenaltyCost} 𝄞)`);
+        if (engine) engine.reviveAndResume();
+      } else {
+        showErrorToast('No tienes suficientes Claves de Sol (𝄞).');
+      }
+    };
+
+    window.exitToSearch = function() {
+      if (activeCountdownInterval) {
+        clearInterval(activeCountdownInterval);
+        activeCountdownInterval = null;
+      }
+      const countdownOverlay = document.getElementById('startCountdownOverlay');
+      if (countdownOverlay) {
+        countdownOverlay.classList.remove('show', 'fading');
+      }
+
+      const modals = ['pauseModal', 'reviveModal', 'resultsModal', 'calibrationScreen', 'settingsModal', 'ytMusicModal', 'addToPlaylistModal', 'fxShopModal'];
+      modals.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.classList.remove('open');
+          el.style.display = 'none';
+        }
+      });
+
+      const calibBackdrop = document.getElementById('calibrationBackdrop');
+      if (calibBackdrop) {
+        calibBackdrop.classList.remove('active');
+        calibBackdrop.style.display = 'none';
+      }
+
+      const curtain = document.getElementById('gameCurtain');
+      if (curtain) {
+        curtain.classList.add('revealed');
+      }
+
+      if (engine) engine.stop();
+      currentActiveBeatmap = null;
+
+      document.getElementById('fixedTopHud').classList.add('hidden');
+      const searchScreen = document.getElementById('searchScreen');
+      if (searchScreen) {
+        searchScreen.classList.remove('hidden');
+        searchScreen.style.display = 'flex';
+      }
+      renderCurrentLibrarySubtab();
+    };
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      loadHighscores();
+      await loadFavoritesSet();
+      updateUserClefsDisplay();
+
+      const continueSaved = localStorage.getItem('beatstar_continue_mode') === 'true';
+      const switchEl = document.getElementById('continueModeSwitch');
+      if (switchEl) switchEl.checked = continueSaved;
+
+      const savedSpeed = localStorage.getItem('beatstar_note_speed') || '1.0';
+      const speedSelect = document.getElementById('settingsNoteSpeedSelect');
+      const speedVal = document.getElementById('settingsNoteSpeedVal');
+      if (speedSelect) speedSelect.value = savedSpeed;
+      if (speedVal) speedVal.innerText = `${savedSpeed}x`;
+
+      const canvas = document.getElementById('gameCanvas');
+      engine = new BeatstarEngine(canvas, {
+        onScoreUpdate: (score, combo, stars, multiplier) => {
+          document.getElementById('hudScore').innerText = score.toLocaleString();
+          document.getElementById('hudCombo').innerText = `COMBO ${combo}`;
+          
+          const multEl = document.getElementById('hudMultiplier');
+          if (multEl) {
+            multEl.innerText = `${multiplier}x`;
+            multEl.className = `multiplier-badge ${multiplier >= 5 ? 'x5' : (multiplier >= 3 ? 'x3' : (multiplier >= 2 ? 'x2' : ''))}`;
+          }
+
+          const starEls = document.querySelectorAll('#starMeter .star-icon');
+          starEls.forEach((el, idx) => {
+            if (idx < stars) el.classList.add('active');
+            else el.classList.remove('active');
+          });
+        },
+        onSongLoaded: (meta) => {
+          document.getElementById('hudSongTitle').innerText = meta.title || 'Canción Desconocida';
+          document.getElementById('pauseSongTitle').innerText = meta.title || 'Canción Desconocida';
+        },
+        onTogglePause: () => {
+          openPauseModal();
+        },
+        onResume: () => {
+          resumeGame();
+        },
+        onShowRewindBadge: () => {
+          const badge = document.getElementById('rewindBadgeOverlay');
+          if (badge) {
+            badge.classList.add('show');
+            setTimeout(() => {
+              badge.classList.remove('show');
+            }, 600);
+          }
+        },
+        onStartCountdown: (onComplete) => {
+          if (activeCountdownInterval) {
+            clearInterval(activeCountdownInterval);
+            activeCountdownInterval = null;
+          }
+
+          const overlay = document.getElementById('startCountdownOverlay');
+          const numEl = document.getElementById('startCountdownNumber');
+          const curtain = document.getElementById('gameCurtain');
+          if (!overlay || !numEl) {
+            if (curtain) curtain.classList.add('revealed');
+            if (onComplete) onComplete();
+            return;
+          }
+
+          overlay.classList.remove('fading');
+          overlay.classList.add('show');
+          let count = 3;
+          numEl.innerText = count;
+          numEl.style.animation = 'none';
+          numEl.offsetHeight;
+          numEl.style.animation = null;
+
+          activeCountdownInterval = setInterval(() => {
+            count--;
+            if (count > 0) {
+              numEl.innerText = count;
+              numEl.style.animation = 'none';
+              numEl.offsetHeight;
+              numEl.style.animation = null;
+            } else if (count === 0) {
+              numEl.innerText = '¡YA!';
+              numEl.style.animation = 'none';
+              numEl.offsetHeight;
+              numEl.style.animation = null;
+              if (curtain) curtain.classList.add('revealed');
+              if (onComplete) onComplete();
+            } else {
+              clearInterval(activeCountdownInterval);
+              activeCountdownInterval = null;
+              overlay.classList.remove('show');
+              overlay.classList.add('fading');
+              setTimeout(() => {
+                overlay.classList.remove('fading');
+              }, 350);
+            }
+          }, 600);
+        },
+        onMissPenalty: (penaltyCost, missCount) => {
+          currentPenaltyCost = penaltyCost;
+          document.getElementById('reviveCostVal').innerText = penaltyCost;
+          document.getElementById('btnPayReviveCost').innerText = penaltyCost;
+          const reviveModal = document.getElementById('reviveModal');
+          if (reviveModal) {
+            reviveModal.style.display = 'flex';
+            reviveModal.classList.add('open');
+          }
+        },
+        onMetronomeBeat: () => {
+          const el = document.getElementById('metronomeIndicator');
+          if (el) {
+            el.classList.add('beat');
+            setTimeout(() => el.classList.remove('beat'), 130);
+          }
+        },
+        onGameEnd: (score, maxCombo, stars, stats, earnedClefs) => {
+          addClefs(earnedClefs);
+          const isNewRecord = saveHighscore(currentActiveBeatmap?.metadata?.id || 'song', score, stars, maxCombo);
+          showResults(score, maxCombo, stars, stats, earnedClefs, isNewRecord);
+        }
+      });
+
+      function bindBtn(id, fn) {
+        const el = document.getElementById(id);
+        if (el) el.onclick = (e) => { if (e) e.preventDefault(); fn(); };
+      }
+
+      bindBtn('btnOpenSettings', openSettingsModal);
+      bindBtn('btnCloseSettings', closeSettingsModal);
+      bindBtn('btnSettingsOpenCalib', openNativeCalibration);
+      bindBtn('btnSettingsOpenImport', openYTMusicModal);
+      bindBtn('btnExitCalib', saveAndExitCalibration);
+      bindBtn('btnCloseYTMModal', closeYTMusicModal);
+      bindBtn('btnPauseGame', openPauseModal);
+      bindBtn('btnResumeGame', resumeGame);
+      bindBtn('btnRestartGame', restartGame);
+      bindBtn('btnExitGame', exitToSearch);
+
+      const savedOffset = localStorage.getItem('beatstar_offset') || '0';
+      updateOffset(savedOffset);
+
+      executeSearch();
+      renderCurrentLibrarySubtab();
+    });
+
+    function switchMainTab(tab) {
+      currentActiveTab = tab;
+      const searchTabBtn = document.getElementById('tabSearchBtn');
+      const libraryTabBtn = document.getElementById('tabLibraryBtn');
+      const searchSection = document.getElementById('tabSearchSection');
+      const librarySection = document.getElementById('tabLibrarySection');
+
+      if (tab === 'search') {
+        searchTabBtn.classList.add('active');
+        libraryTabBtn.classList.remove('active');
+        searchSection.classList.remove('hidden');
+        librarySection.classList.add('hidden');
+      } else {
+        libraryTabBtn.classList.add('active');
+        searchTabBtn.classList.remove('active');
+        librarySection.classList.remove('hidden');
+        searchSection.classList.add('hidden');
+        renderCurrentLibrarySubtab();
+      }
+    }
+
+    function switchLibrarySubtab(subtab) {
+      currentLibrarySubtab = subtab;
+      
+      const subtabDownloadsBtn = document.getElementById('subtabDownloadsBtn');
+      const subtabFavoritesBtn = document.getElementById('subtabFavoritesBtn');
+      const subtabPlaylistsBtn = document.getElementById('subtabPlaylistsBtn');
+
+      const downloadsCont = document.getElementById('subtabDownloadsContainer');
+      const favoritesCont = document.getElementById('subtabFavoritesContainer');
+      const playlistsCont = document.getElementById('subtabPlaylistsContainer');
+
+      [subtabDownloadsBtn, subtabFavoritesBtn, subtabPlaylistsBtn].forEach(b => b.classList.remove('active'));
+      [downloadsCont, favoritesCont, playlistsCont].forEach(c => c.classList.add('hidden'));
+
+      if (subtab === 'downloads') {
+        subtabDownloadsBtn.classList.add('active');
+        downloadsCont.classList.remove('hidden');
+        renderDownloadsSubtab();
+      } else if (subtab === 'favorites') {
+        subtabFavoritesBtn.classList.add('active');
+        favoritesCont.classList.remove('hidden');
+        renderFavoritesSubtab();
+      } else if (subtab === 'playlists') {
+        subtabPlaylistsBtn.classList.add('active');
+        playlistsCont.classList.remove('hidden');
+        renderPlaylistsSubtab();
+      }
+    }
+
+    function renderCurrentLibrarySubtab() {
+      switchLibrarySubtab(currentLibrarySubtab);
+    }
+
+    function showErrorToast(msg) {
+      const toast = document.getElementById('errorToast');
+      document.getElementById('errorToastIcon').innerText = '⚠️';
+      document.getElementById('errorToastMsg').innerText = msg;
+      toast.classList.remove('success-toast');
+      toast.classList.add('show');
+
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => hideErrorToast(), 5000);
+    }
+
+    function showSuccessToast(msg) {
+      const toast = document.getElementById('errorToast');
+      document.getElementById('errorToastIcon').innerText = '✨';
+      document.getElementById('errorToastMsg').innerText = msg;
+      toast.classList.add('success-toast', 'show');
+
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => hideErrorToast(), 4000);
+    }
+
+    function hideErrorToast() {
+      document.getElementById('errorToast').classList.remove('show');
+    }
+
+    function updateOffset(val) {
+      const num = parseInt(val, 10) || 0;
+      const formatted = `${num > 0 ? '+' : ''}${num} ms`;
+      
+      const calibSlider = document.getElementById('calibOffsetSlider');
+      const calibVal = document.getElementById('calibOffsetVal');
+      const pauseSlider = document.getElementById('pauseOffsetSlider');
+      const pauseVal = document.getElementById('pauseOffsetVal');
+
+      if (calibSlider) calibSlider.value = num;
+      if (calibVal) calibVal.innerText = formatted;
+      if (pauseSlider) pauseSlider.value = num;
+      if (pauseVal) pauseVal.innerText = formatted;
+
+      if (engine) engine.setLatencyOffset(num);
+    }
+
+    function nudgeOffset(delta) {
+      const current = parseInt(localStorage.getItem('beatstar_offset') || '0', 10);
+      const next = Math.max(-1000, Math.min(1000, current + delta));
+      updateOffset(next);
+    }
+
+    // ==========================================
+    // FAVORITES (❤️) & PLAYLIST MODAL ACTIONS
+    // ==========================================
+
+    async function toggleFavoriteSong(songId, songObj = null) {
+      let targetObj = songObj;
+      if (!targetObj) {
+        targetObj = searchResultsCache.find(s => s.id === songId);
+      }
+      if (!targetObj) {
+        targetObj = await IndexedDBStorage.getChart(songId);
+      }
+      if (!targetObj) return;
+
+      const isFav = await IndexedDBStorage.toggleFavorite(targetObj);
+      if (isFav) {
+        favoriteIdsSet.add(songId);
+        showSuccessToast(`Añadida a favoritos: ${targetObj.title}`);
+      } else {
+        favoriteIdsSet.delete(songId);
+        showSuccessToast(`Eliminada de favoritos: ${targetObj.title}`);
+      }
+
+      document.querySelectorAll(`.heart-btn[data-id="${songId}"]`).forEach(btn => {
+        if (isFav) {
+          btn.innerText = '❤️';
+          btn.classList.add('active');
+        } else {
+          btn.innerText = '🤍';
+          btn.classList.remove('active');
+        }
+      });
+
+      if (currentLibrarySubtab === 'favorites') {
+        renderFavoritesSubtab();
+      }
+    }
+
+    async function openAddToPlaylistModal(songId) {
+      let song = searchResultsCache.find(s => s.id === songId);
+      if (!song) {
+        song = await IndexedDBStorage.getChart(songId);
+      }
+      if (!song) {
+        const favs = await IndexedDBStorage.getAllFavorites();
+        song = favs.find(f => f.id === songId);
+      }
+      if (!song) return;
+
+      songPendingAddToPlaylist = song;
+      document.getElementById('addToPlaylistSongTitle').innerText = `${song.title} - ${song.artist}`;
+
+      const playlists = await IndexedDBStorage.getAllPlaylists();
+      const listCont = document.getElementById('availablePlaylistsList');
+
+      if (!playlists || playlists.length === 0) {
+        listCont.innerHTML = `<p class="text-[10px] text-gray-400 text-center py-2">No tienes playlists creadas todavía.</p>`;
+      } else {
+        listCont.innerHTML = playlists.map(pl => {
+          return `
+            <div onclick="addPendingSongToPlaylist('${pl.id}')" class="p-2 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 flex items-center justify-between cursor-pointer transition">
+              <span class="text-xs font-bold text-white truncate max-w-[200px]">📁 ${pl.title}</span>
+              <span class="text-[9px] font-mono text-cyan-300 font-bold">${pl.tracks ? pl.tracks.length : 0} temas</span>
+            </div>
+          `;
+        }).join('');
+      }
+
+      const modal = document.getElementById('addToPlaylistModal');
+      modal.style.display = 'flex';
+      modal.classList.add('open');
+    }
+
+    function closeAddToPlaylistModal() {
+      const modal = document.getElementById('addToPlaylistModal');
+      modal.classList.remove('open');
+      modal.style.display = 'none';
+      songPendingAddToPlaylist = null;
+    }
+
+    async function addPendingSongToPlaylist(playlistId) {
+      if (!songPendingAddToPlaylist) return;
+      try {
+        await IndexedDBStorage.addTrackToPlaylist(playlistId, songPendingAddToPlaylist);
+        showSuccessToast(`Añadida a la playlist.`);
+        closeAddToPlaylistModal();
+        if (currentLibrarySubtab === 'playlists') {
+          renderPlaylistsSubtab();
+        }
+      } catch (err) {
+        showErrorToast(err.message);
+      }
+    }
+
+    async function createPlaylistAndAddCurrentSong() {
+      const input = document.getElementById('newPlaylistNameInput');
+      const name = input.value.trim();
+      if (!name) {
+        showErrorToast('Por favor escribe un nombre para la playlist.');
+        return;
+      }
+
+      const newPl = {
+        id: 'pl_' + Date.now(),
+        title: name,
+        item_count: songPendingAddToPlaylist ? 1 : 0,
+        tracks: songPendingAddToPlaylist ? [songPendingAddToPlaylist] : [],
+        createdAt: Date.now()
+      };
+
+      await IndexedDBStorage.savePlaylist(newPl);
+      input.value = '';
+      showSuccessToast(`Playlist "${name}" creada.`);
+      closeAddToPlaylistModal();
+
+      if (currentLibrarySubtab === 'playlists') {
+        renderPlaylistsSubtab();
+      }
+    }
+
+    // ==========================================
+    // AGGREGATED SEARCH & UI RENDERING
+    // ==========================================
+
+    async function executeSearch() {
+      const q = document.getElementById('searchInput').value.trim();
+      if (!q) return;
+
+      const btnText = document.getElementById('searchBtnText');
+      const spinner = document.getElementById('searchSpinner');
+      const resultsList = document.getElementById('resultsList');
+
+      btnText.innerText = '...';
+      spinner.classList.remove('hidden');
+
+      try {
+        const res = await fetch(`/api/v1/search/community?q=${encodeURIComponent(q)}`);
+        if (!res.ok) throw new Error('Error al consultar servidores comunitarios.');
+        searchResultsCache = await res.json();
+        renderSearchResults(searchResultsCache);
+      } catch (err) {
+        resultsList.innerHTML = `<div class="p-5 text-center text-xs text-red-400 glass-card">Error buscando mapas comunitarios: ${err.message}</div>`;
+      } finally {
+        btnText.innerText = 'Buscar';
+        spinner.classList.add('hidden');
+      }
+    }
+
+    function renderSearchResults(items) {
+      const container = document.getElementById('resultsList');
+      if (!items || items.length === 0) {
+        container.innerHTML = `
+          <div class="p-8 text-center text-xs text-gray-400 glass-card space-y-1">
+            <p class="font-bold text-sm text-gray-300">No se encontraron mapas comunitarios</p>
+            <p class="text-[10px] text-gray-500">Prueba con palabras clave en inglés, nombre de artista o títulos populares.</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = items.map((item, idx) => {
+        const hs = highscores[item.id];
+        const isFav = favoriteIdsSet.has(item.id);
+        const sourceBadgeClass = item.source === 'osu' 
+          ? 'bg-pink-500/20 text-pink-300 border-pink-500/40' 
+          : (item.source === 'quaver' ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-purple-500/20 text-purple-300 border-purple-500/40');
+
+        const diffChipsHtml = (item.difficulties || []).map(diff => {
+          const starsText = diff.stars ? `${diff.stars.toFixed(1)}★` : '';
+          const diffColor = diff.stars < 2.5 
+            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/35'
+            : (diff.stars < 4.5 
+                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 hover:bg-cyan-500/35'
+                : (diff.stars < 6.5 
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/35'
+                    : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/35'));
+
+          return `
+            <button 
+              onclick="downloadAndPlaySong('${item.id}', '${diff.id}', '${diff.name.replace(/'/g, "\\'")}', ${idx})" 
+              class="px-2.5 py-1 rounded-lg text-[10px] font-bold border transition transform active:scale-95 cursor-pointer flex items-center gap-1 ${diffColor}"
+              title="Jugar dificultad ${diff.name}"
+            >
+              <span>${diff.name}</span>
+              ${starsText ? `<span class="opacity-90 font-mono">${starsText}</span>` : ''}
+            </button>
+          `;
+        }).join('');
+
+        return `
+          <div class="result-card flex-col items-stretch p-3 space-y-2.5">
+            <!-- Card Header: Thumb + Info + Actions -->
+            <div class="flex items-center gap-2.5">
+              <div class="relative w-16 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-black/60 border border-white/10 shadow-md">
+                <img src="${item.thumbnail}" alt="thumb" class="w-full h-full object-cover" loading="lazy" onerror="this.src='https://assets.ppy.sh/beatmaps/placeholder.jpg'">
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-1.5">
+                  <span class="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider border ${sourceBadgeClass}">
+                    ${item.source_name}
+                  </span>
+                  ${hs ? `<span class="highscore-badge">🏆 ${hs.score.toLocaleString()}</span>` : ''}
+                </div>
+                <p class="text-xs font-bold text-white truncate mt-0.5">${item.title}</p>
+                <p class="text-[10px] text-gray-400 truncate">${item.artist} • <span class="text-gray-500">${item.creator}</span></p>
+              </div>
+
+              <!-- Heart & Plus Buttons -->
+              <div class="flex items-center gap-1">
+                <button onclick="toggleFavoriteSong('${item.id}')" data-id="${item.id}" class="heart-btn ${isFav ? 'active' : ''} p-1 text-sm cursor-pointer" title="Añadir a Favoritos">
+                  ${isFav ? '❤️' : '🤍'}
+                </button>
+                <button onclick="openAddToPlaylistModal('${item.id}')" class="plus-btn p-1 text-sm cursor-pointer" title="Añadir a Playlist">
+                  ➕
+                </button>
+              </div>
+            </div>
+
+            <!-- Difficulty Chips Row -->
+            <div class="pt-1.5 border-t border-white/5 flex items-center gap-1.5 overflow-x-auto pb-0.5">
+              <span class="text-[9px] uppercase font-bold text-gray-500 flex-shrink-0 mr-0.5">Dificultad:</span>
+              ${diffChipsHtml}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // ==========================================
+    // ONE-CLICK DOWNLOAD, UNPACK & PLAY
+    // ==========================================
+
+    async function downloadAndPlaySong(chartId, diffId, diffName, searchItemIdx = null) {
+      let chartItem = searchResultsCache.find(i => i.id === chartId) || (searchItemIdx !== null ? searchResultsCache[searchItemIdx] : null);
+      if (!chartItem) {
+        chartItem = await IndexedDBStorage.getChart(chartId);
+      }
+      if (!chartItem) {
+        const favs = await IndexedDBStorage.getAllFavorites();
+        chartItem = favs.find(f => f.id === chartId);
+      }
+      if (!chartItem) {
+        showErrorToast('Información de mapa no encontrada.');
+        return;
+      }
+
+      currentActiveChartItem = chartItem;
+
+      const overlay = document.getElementById('globalLoadingOverlay');
+      const loadTitle = document.getElementById('globalLoadTitle');
+      const loadArtist = document.getElementById('globalLoadArtist');
+      const loadStatus = document.getElementById('globalLoadStatus');
+      const curtain = document.getElementById('gameCurtain');
+
+      if (curtain) curtain.classList.remove('revealed');
+
+      loadTitle.innerText = chartItem.title;
+      loadArtist.innerText = `${chartItem.artist} (${chartItem.source_name || 'Comunidad'})`;
+      loadStatus.innerText = 'Descargando paquete de notas...';
+      overlay.classList.add('active');
+
+      try {
+        let cached = await IndexedDBStorage.getChart(chartId);
+        let arrayBuffer = null;
+        let audioBlob = null;
+
+        if (cached && cached.audioBlob) {
+          loadStatus.innerText = 'Cargando mapa desde memoria local...';
+          audioBlob = cached.audioBlob;
+          currentActiveAudioBlob = audioBlob;
+          
+          setTimeout(() => {
+            overlay.classList.remove('active');
+            startGame(cached, audioBlob, diffName);
+          }, 200);
+          return;
+        }
+
+        loadStatus.innerText = 'Descargando paquete comprimido...';
+        const downloadTargetUrl = chartItem.download_url || `/api/v1/download/proxy?url=${encodeURIComponent(chartItem.direct_download_url)}`;
+        
+        const response = await fetch(downloadTargetUrl);
+        if (!response.ok) {
+          if (chartItem.fallback_download_url) {
+            const fbUrl = `/api/v1/download/proxy?url=${encodeURIComponent(chartItem.fallback_download_url)}`;
+            const fbResp = await fetch(fbUrl);
+            if (fbResp.ok) {
+              arrayBuffer = await fbResp.arrayBuffer();
+            }
+          }
+          if (!arrayBuffer) {
+            throw new Error(`Error descargando paquete (${response.statusText}).`);
+          }
+        } else {
+          arrayBuffer = await response.arrayBuffer();
+        }
+
+        loadStatus.innerText = 'Descomprimiendo y parseando a 3 carriles...';
+        const fileExt = chartItem.source === 'quaver' ? 'qp' : (chartItem.source === 'clonehero' ? 'zip' : 'osz');
+        const unpackedData = await PackageUnpacker.unpack(arrayBuffer, fileExt, diffId);
+
+        currentActiveAudioBlob = unpackedData.audioBlob;
+
+        loadStatus.innerText = 'Guardando en biblioteca offline...';
+        await IndexedDBStorage.saveChart(chartItem, unpackedData, unpackedData.audioBlob);
+
+        setTimeout(() => {
+          overlay.classList.remove('active');
+          startGame(unpackedData, unpackedData.audioBlob, diffName);
+        }, 150);
+
+      } catch (err) {
+        overlay.classList.remove('active');
+        if (curtain) curtain.classList.add('revealed');
+        showErrorToast('Error al preparar la canción: ' + err.message);
+        console.error(err);
+      }
+    }
+
+    function startGame(beatmapData, audioBlob, diffLabel = '') {
+      currentActiveBeatmap = beatmapData;
+
+      document.getElementById('searchScreen').classList.add('hidden');
+      document.getElementById('fixedTopHud').classList.remove('hidden');
+      
+      const modals = ['resultsModal', 'pauseModal', 'reviveModal', 'calibrationScreen', 'addToPlaylistModal', 'fxShopModal'];
+      modals.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.classList.remove('open');
+          el.style.display = 'none';
+        }
+      });
+
+      engine.loadBeatmap(beatmapData, audioBlob);
+    }
+
+    function showResults(score, maxCombo, stars, stats, earnedClefs = 0, isNewRecord = false) {
+      document.getElementById('resSongTitle').innerText = currentActiveBeatmap?.metadata?.title || 'Canción';
+      document.getElementById('resDiffName').innerText = currentActiveBeatmap?.metadata?.difficulty_name || 'Dificultad';
+      document.getElementById('resFinalScore').innerText = score.toLocaleString();
+      document.getElementById('resMaxCombo').innerText = maxCombo;
+      document.getElementById('resEarnedClefs').innerText = earnedClefs;
+
+      const badgeStatus = document.getElementById('resBadgeStatus');
+      if (badgeStatus) {
+        if (isNewRecord) {
+          badgeStatus.innerText = '🏆 ¡NUEVO RÉCORD PERSONAL!';
+          badgeStatus.className = 'inline-block px-3 py-0.5 rounded-full bg-amber-500/30 text-amber-300 text-xs font-black tracking-wider uppercase border border-amber-400/50 shadow-md';
+        } else {
+          badgeStatus.innerText = '¡Pista Completada!';
+          badgeStatus.className = 'inline-block px-3 py-0.5 rounded-full bg-pink-500/20 text-pink-400 text-xs font-black tracking-wider uppercase';
+        }
+      }
+
+      document.getElementById('resPPlus').innerText = stats.perfectPlus;
+      document.getElementById('resP').innerText = stats.perfect;
+      document.getElementById('resG').innerText = stats.great;
+      document.getElementById('resM').innerText = stats.miss;
+
+      const starStr = '★'.repeat(stars) + '☆'.repeat(Math.max(0, 5 - stars));
+      document.getElementById('resStars').innerText = starStr;
+
+      const modal = document.getElementById('resultsModal');
+      if (modal) {
+        modal.style.display = 'flex';
+        modal.classList.add('open');
+      }
+    }
+
+    function restartCurrentSong() {
+      const modal = document.getElementById('resultsModal');
+      if (modal) {
+        modal.classList.remove('open');
+        modal.style.display = 'none';
+      }
+      if (currentActiveBeatmap && currentActiveAudioBlob) {
+        startGame(currentActiveBeatmap, currentActiveAudioBlob, currentActiveBeatmap.metadata?.difficulty_name);
+      }
+    }
+
+    // ==========================================
+    // LIBRARY SUBTABS RENDERING (Downloads, Favorites, Playlists)
+    // ==========================================
+
+    async function renderDownloadsSubtab() {
+      const container = document.getElementById('libraryTracksList');
+      if (!container) return;
+
+      try {
+        const savedCharts = await IndexedDBStorage.getAllCharts();
+        if (!savedCharts || savedCharts.length === 0) {
+          container.innerHTML = `
+            <div class="p-8 text-center text-xs text-gray-400 glass-card space-y-1.5">
+              <p class="font-bold text-sm text-gray-300">Sin descargas offline</p>
+              <p class="text-[10px] text-gray-500">Juega canciones en el buscador para guardarlas aquí automáticamente.</p>
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = savedCharts.map(item => {
+          const hs = highscores[item.id];
+          const isFav = favoriteIdsSet.has(item.id);
+          return `
+            <div class="result-card">
+              <div onclick="playSavedLibraryChart('${item.id}')" class="flex-1 flex items-center gap-2.5 min-w-0 cursor-pointer">
+                <div class="relative w-14 h-11 rounded-xl overflow-hidden flex-shrink-0 bg-black/50 border border-white/10">
+                  <img src="${item.thumbnail}" alt="thumb" class="w-full h-full object-cover" loading="lazy">
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-1.5">
+                    <span class="text-[8px] font-bold px-1.5 py-0.2 rounded bg-pink-500/20 text-pink-300 uppercase">${item.source_name || 'Comunidad'}</span>
+                    ${hs ? `<span class="highscore-badge">🏆 ${hs.score.toLocaleString()}</span>` : ''}
+                  </div>
+                  <p class="text-xs font-bold text-white truncate mt-0.5">${item.title}</p>
+                  <p class="text-[10px] text-gray-400 truncate">${item.artist}</p>
+                </div>
+              </div>
+
+              <!-- Heart Button -->
+              <button onclick="toggleFavoriteSong('${item.id}')" data-id="${item.id}" class="heart-btn ${isFav ? 'active' : ''} p-1.5 text-sm cursor-pointer" title="Favorito">
+                ${isFav ? '❤️' : '🤍'}
+              </button>
+
+              <!-- Add to Playlist Button -->
+              <button onclick="openAddToPlaylistModal('${item.id}')" class="plus-btn p-1.5 text-sm cursor-pointer" title="Añadir a Playlist">
+                ➕
+              </button>
+
+              <!-- Delete Button -->
+              <button onclick="deleteSavedLibraryChart('${item.id}')" class="text-gray-500 hover:text-red-400 p-1.5 text-xs cursor-pointer" title="Eliminar de almacenamiento local">✕</button>
+
+              <!-- Play Button -->
+              <button onclick="playSavedLibraryChart('${item.id}')" class="w-8 h-8 rounded-full bg-pink-500/20 hover:bg-pink-500/30 text-pink-400 flex items-center justify-center flex-shrink-0 cursor-pointer active:scale-95 transition" title="Jugar">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+              </button>
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        container.innerHTML = `<div class="p-4 text-xs text-red-400">Error: ${e.message}</div>`;
+      }
+    }
+
+    async function renderFavoritesSubtab() {
+      const container = document.getElementById('favoritesTracksList');
+      if (!container) return;
+
+      try {
+        const favs = await IndexedDBStorage.getAllFavorites();
+        if (!favs || favs.length === 0) {
+          container.innerHTML = `
+            <div class="p-8 text-center text-xs text-gray-400 glass-card space-y-1.5">
+              <p class="font-bold text-sm text-gray-300">No tienes favoritos aún</p>
+              <p class="text-[10px] text-gray-500">Pulsa el corazón ❤️ en cualquier canción para tenerla a mano.</p>
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = favs.map(item => {
+          const hs = highscores[item.id];
+          return `
+            <div class="result-card flex-col items-stretch p-3 space-y-2">
+              <div class="flex items-center gap-2.5">
+                <div class="relative w-14 h-11 rounded-xl overflow-hidden flex-shrink-0 bg-black/50 border border-white/10">
+                  <img src="${item.thumbnail}" alt="thumb" class="w-full h-full object-cover" loading="lazy">
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-bold text-white truncate">${item.title}</p>
+                  <p class="text-[10px] text-gray-400 truncate">${item.artist}</p>
+                </div>
+                <button onclick="toggleFavoriteSong('${item.id}')" data-id="${item.id}" class="heart-btn active p-1 text-base cursor-pointer">
+                  ❤️
+                </button>
+                <button onclick="openAddToPlaylistModal('${item.id}')" class="plus-btn p-1 text-sm cursor-pointer">
+                  ➕
+                </button>
+              </div>
+
+              <!-- Difficulty Chips -->
+              <div class="pt-1 border-t border-white/5 flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                ${(item.difficulties || []).map(diff => `
+                  <button onclick="downloadAndPlaySong('${item.id}', '${diff.id}', '${diff.name.replace(/'/g, "\\'")}')" class="px-2 py-0.5 bg-pink-500/20 text-pink-300 border border-pink-500/40 rounded text-[9px] font-bold cursor-pointer hover:bg-pink-500/35">
+                    ${diff.name}
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        container.innerHTML = `<div class="p-4 text-xs text-red-400">Error: ${e.message}</div>`;
+      }
+    }
+
+    async function renderPlaylistsSubtab() {
+      const container = document.getElementById('playlistsList');
+      if (!container) return;
+
+      try {
+        const playlists = await IndexedDBStorage.getAllPlaylists();
+        if (!playlists || playlists.length === 0) {
+          container.innerHTML = `
+            <div class="p-8 text-center text-xs text-gray-400 glass-card space-y-1.5">
+              <p class="font-bold text-sm text-gray-300">No hay playlists</p>
+              <p class="text-[10px] text-gray-500">Importa una playlist de YouTube o crea una pulsando ➕ en cualquier canción.</p>
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = playlists.map(pl => {
+          const trackCount = pl.tracks ? pl.tracks.length : 0;
+          return `
+            <div class="result-card justify-between p-3">
+              <div onclick="openPlaylistDetailView('${pl.id}')" class="flex-1 flex items-center gap-2.5 min-w-0 cursor-pointer">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-red-600/40 to-pink-600/40 border border-white/10 flex items-center justify-center text-lg flex-shrink-0 shadow-md">
+                  📁
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-bold text-white truncate">${pl.title}</p>
+                  <p class="text-[10px] text-cyan-300 font-semibold">${trackCount} canciones</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <button onclick="openPlaylistDetailView('${pl.id}')" class="px-2.5 py-1 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 rounded-lg text-xs font-bold transition cursor-pointer">
+                  Ver
+                </button>
+                <button onclick="deletePlaylistConfirm('${pl.id}')" class="text-gray-500 hover:text-red-400 p-1.5 text-xs cursor-pointer" title="Eliminar Playlist">✕</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        container.innerHTML = `<div class="p-4 text-xs text-red-400">Error: ${e.message}</div>`;
+      }
+    }
+
+    async function openPlaylistDetailView(playlistId) {
+      const pl = await IndexedDBStorage.getPlaylist(playlistId);
+      if (!pl) return;
+
+      document.getElementById('playlistsList').classList.add('hidden');
+      const detailView = document.getElementById('selectedPlaylistView');
+      detailView.classList.remove('hidden');
+      document.getElementById('selectedPlaylistTitle').innerText = pl.title;
+
+      const tracksCont = document.getElementById('playlistTracksContainer');
+      const tracks = pl.tracks || [];
+
+      if (tracks.length === 0) {
+        tracksCont.innerHTML = `<p class="text-xs text-gray-400 text-center py-4">Esta playlist no tiene canciones añadidas.</p>`;
+        return;
+      }
+
+      tracksCont.innerHTML = tracks.map(tr => {
+        const searchTitle = tr.title.replace(/\([^)]*\)|\[[^\]]*\]/g, '').trim();
+        return `
+          <div class="result-card p-2.5 justify-between">
+            <div class="flex items-center gap-2 min-w-0 flex-1">
+              <div class="relative w-12 h-9 rounded-lg overflow-hidden flex-shrink-0 bg-black/50 border border-white/10">
+                <img src="${tr.thumbnail}" alt="thumb" class="w-full h-full object-cover" onerror="this.src='https://assets.ppy.sh/beatmaps/placeholder.jpg'">
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-xs font-bold text-white truncate">${tr.title}</p>
+                <p class="text-[9px] text-gray-400 truncate">${Array.isArray(tr.artists) ? tr.artists.join(', ') : (tr.artist || 'YouTube')}</p>
+              </div>
+            </div>
+
+            <!-- Action: Search and Play Beatmap -->
+            <div class="flex items-center gap-1.5">
+              <button onclick="searchAndPlayFromPlaylistTrack('${searchTitle.replace(/'/g, "\\'")}')" class="px-2.5 py-1 bg-gradient-to-r from-pink-500 to-purple-600 text-white rounded-lg text-[10px] font-bold shadow-md cursor-pointer hover:from-pink-400">
+                🔍 Jugar
+              </button>
+              <button onclick="removeTrackFromPlaylistAction('${pl.id}', '${tr.id}')" class="text-gray-500 hover:text-red-400 p-1 text-xs cursor-pointer" title="Quitar de playlist">
+                ✕
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function closePlaylistDetailView() {
+      document.getElementById('selectedPlaylistView').classList.add('hidden');
+      document.getElementById('playlistsList').classList.remove('hidden');
+    }
+
+    async function deletePlaylistConfirm(playlistId) {
+      if (confirm('¿Eliminar esta playlist?')) {
+        await IndexedDBStorage.deletePlaylist(playlistId);
+        showSuccessToast('Playlist eliminada.');
+        renderPlaylistsSubtab();
+      }
+    }
+
+    async function removeTrackFromPlaylistAction(playlistId, trackId) {
+      await IndexedDBStorage.removeTrackFromPlaylist(playlistId, trackId);
+      showSuccessToast('Canción quitada de la playlist.');
+      openPlaylistDetailView(playlistId);
+    }
+
+    function searchAndPlayFromPlaylistTrack(songTitle) {
+      document.getElementById('searchInput').value = songTitle;
+      switchMainTab('search');
+      executeSearch();
+    }
+
+    async function playSavedLibraryChart(chartId) {
+      try {
+        const item = await IndexedDBStorage.getChart(chartId);
+        if (!item || !item.audioBlob) {
+          showErrorToast('Canción no encontrada en almacenamiento.');
+          return;
+        }
+        currentActiveChartItem = item;
+        currentActiveAudioBlob = item.audioBlob;
+        startGame(item, item.audioBlob, item.metadata?.difficulty_name);
+      } catch (err) {
+        showErrorToast('Error cargando canción: ' + err.message);
+      }
+    }
+
+    async function deleteSavedLibraryChart(chartId) {
+      if (confirm('¿Eliminar esta canción del almacenamiento local?')) {
+        await IndexedDBStorage.deleteChart(chartId);
+        showSuccessToast('Canción eliminada de la biblioteca.');
+        renderDownloadsSubtab();
+      }
+    }
+
+    async function playRandomLibraryTrack() {
+      const charts = await IndexedDBStorage.getAllCharts();
+      if (!charts || charts.length === 0) {
+        showErrorToast('No hay canciones descargadas en la biblioteca.');
+        return;
+      }
+      const rand = charts[Math.floor(Math.random() * charts.length)];
+      playSavedLibraryChart(rand.id);
+    }
+
+    // ==========================================
+    // YOUTUBE PLAYLIST IMPORT & AGGREGATION
+    // ==========================================
+
+    async function importDirectPlaylistUrl() {
+      const input = document.getElementById('directPlaylistUrlInput');
+      const url = input.value.trim();
+      if (!url) {
+        showErrorToast('Por favor pega la URL o ID de la playlist.');
+        return;
+      }
+
+      const btn = document.getElementById('btnImportDirectUrl');
+      btn.innerText = '...';
+
+      try {
+        const res = await fetch('/api/v1/playlists/ytmusic/import_url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: url })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || 'Error al importar la playlist.');
+        }
+
+        const data = await res.json();
+        closeYTMusicModal();
+        input.value = '';
+
+        const plRecord = {
+          id: 'yt_' + (data.id || Date.now()),
+          title: data.title || 'Playlist de YouTube',
+          item_count: data.item_count || (data.tracks ? data.tracks.length : 0),
+          tracks: data.tracks || [],
+          source: 'youtube',
+          createdAt: Date.now()
+        };
+
+        await IndexedDBStorage.savePlaylist(plRecord);
+        showSuccessToast(`Playlist "${data.title}" importada (${plRecord.item_count} canciones).`);
+
+        switchMainTab('library');
+        switchLibrarySubtab('playlists');
+        openPlaylistDetailView(plRecord.id);
+
+      } catch (err) {
+        showErrorToast(err.message);
+      } finally {
+        btn.innerText = 'Importar';
+      }
+    }
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/static/sw.js')
+          .then(reg => console.log('PWA Service Worker registered:', reg.scope))
+          .catch(err => console.log('Service Worker registration failed:', err));
+      });
+    }
+  </script>
+</body>
+</html>
